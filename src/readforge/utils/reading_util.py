@@ -3,7 +3,7 @@ import boto3;
 from dotenv import load_dotenv;
 import os;
 from pathlib import Path;
-
+import fitz  #pymupdf
 load_dotenv()
 
 #validate the required var available in environment 
@@ -45,13 +45,15 @@ def get_file_buffer_stream(file_name:str) -> BytesIO:
         #read the file extenstion from the key
         file_extenstion = Path(file_name).suffix
 
+       #common reading for all the file types 
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
+        r2_stream = response['Body']
         
         #read the file from the cloud 
         # get content length and check  
         #goal: reading pdf page by page without loading entire file into memory or disk  
         if file_extenstion == ".pdf":
-            response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
-
+            
         elif file_extenstion == ".csv":
             response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
         elif file_extenstion == ".txt":
@@ -77,6 +79,26 @@ def list_objects() -> dict[str,any]:
 
 #fucntion : create http range request to the bucket
 # goal: to read the pdf and get a page   
-def read_from_s3(file_name:str, range:str) -> BytesIO:
-    base_chunk_size = 1024 * 1024 #1 mb
+
+def stream_pdf_from_r2(key):
+    response = r2.get_object(Bucket=BUCKET, Key=key)
+    r2_stream = response['Body']
+    
+    try:
+        # PyMuPDF can open a stream directly. 
+        # It will internally buffer and fetch pages as needed.
+        doc = fitz.open(stream=r2_stream, filetype="pdf")
+        
+        # Iterate through physical pages
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            
+            # Extract text or images for this specific page
+            text = page.get_text()
+            print(f"Processing PDF Page {page_num + 1}...")
+            # process_page(text)
+            
+    finally:
+        r2_stream.close()
+
     
