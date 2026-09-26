@@ -17,7 +17,7 @@ ACCESS_KEY = os.getenv("CLOUDFLARE_ACCESS_KEY")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 
-
+#boto3 client setup for media bucket 
 s3 = boto3.client(
     service_name='s3',
     # Provide your R2 endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
@@ -40,11 +40,29 @@ def download_files_from_s3(file_name : str, dest_folder: str)-> str:
     s3.download_file(BUCKET_NAME, file_name, str(dest))
     return str(dest)
 
-def get_file_buffer_streamJ(file_name:str) -> BytesIO:
-    buffer= BytesIO()
-    s3.download_fileobj(BUCKET_NAME, file_name, buffer)
-    buffer.seek(0)
-    return buffer
+def get_file_buffer_stream(file_name:str) -> BytesIO:
+    try:
+        #read the file extenstion from the key
+        file_extenstion = Path(file_name).suffix
+
+        
+        #read the file from the cloud 
+        # get content length and check  
+        #goal: reading pdf page by page without loading entire file into memory or disk  
+        if file_extenstion == ".pdf":
+            response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
+
+        elif file_extenstion == ".csv":
+            response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
+        elif file_extenstion == ".txt":
+            pass   
+        #read the file type  
+        buffer = BytesIO(response['Body'].read())
+        
+        return buffer
+    except Exception as e:
+        logger.error(f"Error downloading file from S3: {e}")
+        return None
     
 
 
@@ -57,6 +75,8 @@ def list_objects() -> dict[str,any]:
     return response.get('Contents', [])
 
 
-
-#def read_from_cloudinary(public_id: str) -> BytesIO:
-    #read the file from the cloudinary 
+#fucntion : create http range request to the bucket
+# goal: to read the pdf and get a page   
+def read_from_s3(file_name:str, range:str) -> BytesIO:
+    base_chunk_size = 1024 * 1024 #1 mb
+    
