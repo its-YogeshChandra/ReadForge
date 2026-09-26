@@ -1,104 +1,130 @@
-#goal : reading the file buffer from the media bucket 
-import boto3;
-from dotenv import load_dotenv;
-import os;
-from pathlib import Path;
-import fitz  #pymupdf
+"""Utilities for reading objects stored in a Cloudflare R2 bucket."""
+
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+import json
+import os
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+import boto3
+from dotenv import load_dotenv
+
 load_dotenv()
 
-#validate the required var available in environment 
-for var in ["CLOUDFLARE_SECRET_KEY", "CLOUDFLARE_ACCESS_KEY", "BUCKET_NAME"]:
-    if not os.getenv(var):
-        raise ValueError(f"{var} is not set")   
 
+def _r2_client():
+    """Create an R2 client from the standard Cloudflare credential variables."""
+    account_id = os.getenv("ACCOUNT_ID")
+    access_key = os.getenv("CLOUDFLARE_ACCESS_KEY")
+    secret_key = os.getenv("CLOUDFLARE_SECRET_KEY")
+    if not all((account_id, access_key, secret_key)):
+        raise ValueError(
+            "ACCOUNT_ID, CLOUDFLARE_ACCESS_KEY, and CLOUDFLARE_SECRET_KEY must be set"
+        )
 
-SECRET_KEY = os.getenv("CLOUDFLARE_SECRET_KEY")
-ACCESS_KEY = os.getenv("CLOUDFLARE_ACCESS_KEY")
-BUCKET_NAME = os.getenv("BUCKET_NAME")
-ACCOUNT_ID = os.getenv("ACCOUNT_ID")
-
-#boto3 client setup for media bucket 
-s3 = boto3.client(
-    service_name='s3',
-    # Provide your R2 endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-    endpoint_url=f'https://{ACCOUNT_ID}.r2.cloudflarestorage.com',
-    
-    # Provide your R2 Access Key ID and Secret Access Key
-    aws_access_key_id=ACCESS_KEY,
-    aws_secret_access_key=SECRET_KEY,
-    region_name='auto',  # Required by boto3, not used by R2
-)
-
-
-#download files from the bucket and load them into a folder
-# return : path to the file  
-def download_files_from_s3(file_name : str, dest_folder: str)-> str:
-    dest = Path(f"{dest_folder}/{file_name}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    
-    #s3.download_file writes directly to disk — no response to read
-    s3.download_file(BUCKET_NAME, file_name, str(dest))
-    return str(dest)
-
-def get_file_buffer_stream(file_name:str) -> BytesIO:
-    try:
-        #read the file extenstion from the key
-        file_extenstion = Path(file_name).suffix
-
-       #common reading for all the file types 
-        response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
-        r2_stream = response['Body']
-        
-        #read the file from the cloud 
-        # get content length and check  
-        #goal: reading pdf page by page without loading entire file into memory or disk  
-        if file_extenstion == ".pdf":
-            
-        elif file_extenstion == ".csv":
-            response = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
-        elif file_extenstion == ".txt":
-            pass   
-        #read the file type  
-        buffer = BytesIO(response['Body'].read())
-        
-        return buffer
-    except Exception as e:
-        logger.error(f"Error downloading file from S3: {e}")
-        return None
-    
-
-
-# List objects
-def list_objects() -> dict[str,any]:
-    response =s3.list_objects_v2(
-        Bucket=BUCKET_NAME
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name="auto",
     )
 
-    return response.get('Contents', [])
+
+def _bucket_name() -> str:
+    bucket = os.getenv("BUCKET_NAME")
+    if not bucket:
+        raise ValueError("BUCKET_NAME is not set")
+    return bucket
 
 
-#fucntion : create http range request to the bucket
-# goal: to read the pdf and get a page   
+def download_files_from_s3(file_name: str, dest_folder: str) -> str:
+    """Download an object from R2 to a local path and return that path."""
+    dest = Path(dest_folder) / file_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _r2_client().download_file(_bucket_name(), file_name, str(dest))
+    return str(dest)
 
-def stream_pdf_from_r2(key):
-    response = r2.get_object(Bucket=BUCKET, Key=key)
-    r2_stream = response['Body']
-    
+
+def create_presigned_url(file_name: str) -> str:
+    """Create an R2 GET URL that is valid for one hour."""
+    return _r2_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": _bucket_name(), "Key": file_name},
+        ExpiresIn=3600,
+    )
+
+
+class Presigned_url:
+    type: str
+    main_url: str
+
+
+def submit_ocr_batch(
+    presigned_urls: Sequence[Presigned_url],
+    *,
+    api_key: str | None = None,
+    model: str = "mistral-ocr-latest",
+) -> dict[str, Any]:
+    """Submit one Mistral OCR batch request per presigned document URL.
+
+    Uses inline batch mode, which supports fewer than 10,000 requests. Larger
+    batches need to be submitted as an uploaded JSONL file. The result contains
+    queued job metadata; retrieve OCR results later using the returned job ID.
+    """
+    if not presigned_urls:
+        raise ValueError("At least one presigned URL is required")
+    if len(presigned_urls) >= 10_000:
+        raise ValueError("Inline OCR batches support fewer than 10,000 requests")
+
+    key = api_key or os.getenv("MISTRAL_API_KEY")
+    if not key:
+        raise ValueError("MISTRAL_API_KEY is not set")
+
+    # alternative to : creating batch vec ,iterating over presignedurls , pushing element into batch
+    batch_requests = [
+        {
+            "custom_id": str(index),
+            "body": {
+                "document": {"type": payload.type, "document_url": payload.main_url},
+            },
+        }
+        for index, payload in enumerate(presigned_urls)
+    ]
+
+    payload = json.dumps(
+        {
+            "endpoint": "/v1/ocr",
+            "model": model,
+            "requests": batch_requests,
+            "timeout_hours": 24,
+        }
+    ).encode("utf-8")
+    request = Request(
+        "https://api.mistral.ai/v1/batch/jobs",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
     try:
-        # PyMuPDF can open a stream directly. 
-        # It will internally buffer and fetch pages as needed.
-        doc = fitz.open(stream=r2_stream, filetype="pdf")
-        
-        # Iterate through physical pages
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            
-            # Extract text or images for this specific page
-            text = page.get_text()
-            print(f"Processing PDF Page {page_num + 1}...")
-            # process_page(text)
-            
-    finally:
-        r2_stream.close()
+        with urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Mistral batch submission failed ({error.code}): {detail}"
+        ) from error
+    except URLError as error:
+        raise RuntimeError(f"Could not reach Mistral API: {error.reason}") from error
 
-    
+
+def list_objects() -> list[dict]:
+    """List objects in the configured R2 bucket."""
+    response = _r2_client().list_objects_v2(Bucket=_bucket_name())
+    return response.get("Contents", [])
