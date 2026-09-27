@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from readforge.server import app
 
 # Replace this with an object key that currently exists in the R2 media bucket.
-EXISTING_MEDIA_FILE = "REPLACE_WITH_EXISTING_MEDIA_FILE.pdf"
+EXISTING_MEDIA_FILE = "Fintech-Edge-April-2018.pdf"
 
 # Replace this with an object key that definitely does not exist in the bucket.
 MISSING_MEDIA_FILE = "REPLACE_WITH_MISSING_MEDIA_FILE.pdf"
@@ -57,8 +57,8 @@ def _assert_validation_error(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-#what : Queues a real object from the configured R2 bucket in the configured Redis.
-#why   : The complete HTTP, storage, signing, and queueing flow must return a usable job ID.
+# what : Queues a real object from the configured R2 bucket in the configured Redis.
+# why   : The complete HTTP, storage, signing, and queueing flow must return a usable job ID.
 def test_upload_existing_document_returns_202(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
@@ -77,8 +77,8 @@ def test_upload_existing_document_returns_202(api_client: TestClient) -> None:
     assert UUID(body["job_id"])
 
 
-#what : Sends the same real request twice with one idempotency key.
-#why   : ADDED - retries must return the original Redis job instead of creating duplicates.
+# what : Sends the same real request twice with one idempotency key.
+# why   : ADDED - retries must return the original Redis job instead of creating duplicates.
 def test_repeated_idempotency_key_returns_same_job(
     api_client: TestClient,
 ) -> None:
@@ -93,8 +93,8 @@ def test_repeated_idempotency_key_returns_same_job(
     assert first_response.json()["job_id"] == second_response.json()["job_id"]
 
 
-#what : Queues a real document with an idempotency key at the twenty-byte limit.
-#why   : ADDED - the maximum valid key size must remain accepted by the API and Redis.
+# what : Queues a real document with an idempotency key at the twenty-byte limit.
+# why   : ADDED - the maximum valid key size must remain accepted by the API and Redis.
 def test_upload_accepts_twenty_byte_idempotency_key(
     api_client: TestClient,
 ) -> None:
@@ -115,8 +115,8 @@ def test_upload_accepts_twenty_byte_idempotency_key(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-#what : Requests an object key that does not exist in the real R2 bucket.
-#why   : Missing documents must return 404 and must not be queued in Redis.
+# what : Requests an object key that does not exist in the real R2 bucket.
+# why   : Missing documents must return 404 and must not be queued in Redis.
 def test_missing_document_returns_404(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
@@ -134,8 +134,8 @@ def test_missing_document_returns_404(api_client: TestClient) -> None:
     }
 
 
-#what : Rejects a request that omits the required idempotency key.
-#why   : Every queued request needs an idempotency identity to prevent duplicate work.
+# what : Rejects a request that omits the required idempotency key.
+# why   : Every queued request needs an idempotency identity to prevent duplicate work.
 def test_missing_idempotency_key_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
@@ -150,8 +150,8 @@ def test_missing_idempotency_key_returns_422(api_client: TestClient) -> None:
     )
 
 
-#what : Rejects an idempotency key longer than twenty UTF-8 bytes.
-#why   : The controller contract must enforce the Redis key-size policy.
+# what : Rejects an idempotency key longer than twenty UTF-8 bytes.
+# why   : The controller contract must enforce the Redis key-size policy.
 def test_oversized_idempotency_key_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
@@ -166,8 +166,8 @@ def test_oversized_idempotency_key_returns_422(api_client: TestClient) -> None:
     )
 
 
-#what : Applies the idempotency limit to encoded bytes rather than character count.
-#why   : ADDED - multibyte Unicode input must not bypass the twenty-byte limit.
+# what : Applies the idempotency limit to encoded bytes rather than character count.
+# why   : ADDED - multibyte Unicode input must not bypass the twenty-byte limit.
 def test_multibyte_idempotency_key_over_twenty_bytes_returns_422(
     api_client: TestClient,
 ) -> None:
@@ -184,8 +184,8 @@ def test_multibyte_idempotency_key_over_twenty_bytes_returns_422(
     )
 
 
-#what : Rejects fields outside the declared upload request contract.
-#why   : ADDED - silently ignored fields can conceal client integration mistakes.
+# what : Rejects fields outside the declared upload request contract.
+# why   : ADDED - silently ignored fields can conceal client integration mistakes.
 def test_unexpected_request_field_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
@@ -204,8 +204,8 @@ def test_unexpected_request_field_returns_422(api_client: TestClient) -> None:
     )
 
 
-#what : Rejects an empty filename before contacting R2 or Redis.
-#why   : ADDED - an empty object key cannot identify a processable document.
+# what : Rejects an empty filename before contacting R2 or Redis.
+# why   : ADDED - an empty object key cannot identify a processable document.
 def test_empty_file_name_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
