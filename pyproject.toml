@@ -10,12 +10,15 @@ requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.43.103",
     "fastapi[standard]>=0.141.1",
+    "google-cloud-documentai>=3.15.0",
+    "google-cloud-storage>=3.15.0",
     "python-dotenv>=1.0.0",
     "redis>=8.1.0",
 ]
 
 [project.scripts]
 readforge = "readforge:main"
+readforge-ocr = "readforge.document_ai:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

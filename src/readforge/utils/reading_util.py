@@ -1,12 +1,7 @@
 """Utilities for reading objects stored in a Cloudflare R2 bucket."""
 
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
-import json
 import os
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 import boto3
 from botocore.exceptions import ClientError
@@ -74,74 +69,6 @@ def create_presigned_url(file_name: str) -> str:
         Params={"Bucket": _bucket_name(), "Key": file_name},
         ExpiresIn=3600,
     )
-
-
-class Presigned_url:
-    type: str
-    main_url: str
-
-
-def submit_ocr_batch(
-    presigned_urls: Sequence[Presigned_url],
-) -> dict[str, Any]:
-    """Submit one Mistral OCR batch request per presigned document URL.
-
-    Uses inline batch mode, which supports fewer than 10,000 requests. Larger
-    batches need to be submitted as an uploaded JSONL file. The result contains
-    queued job metadata; retrieve OCR results later using the returned job ID.
-    """
-    if not presigned_urls:
-        raise ValueError("At least one presigned URL is required")
-    if len(presigned_urls) >= 10_000:
-        raise ValueError("Inline OCR batches support fewer than 10,000 requests")
-
-    key = os.getenv("OCR_API_KEY")
-    if not key:
-        raise ValueError("OCR_API_KEY is not set")
-    model_name = os.getenv("AI_MODEL_NAME")
-
-    if not model_name:
-        raise ValueError("MODEL_NAME is not set")
-
-    # alternative to : creating batch vec ,iterating over presignedurls , pushing element into batch
-    batch_requests = [
-        {
-            "custom_id": str(index),
-            "body": {
-                "document": {"type": payload.type, "document_url": payload.main_url},
-            },
-        }
-        for index, payload in enumerate(presigned_urls)
-    ]
-
-    payload = json.dumps(
-        {
-            "endpoint": "/v1/ocr",
-            "model": model_name,
-            "requests": batch_requests,
-            "timeout_hours": 24,
-        }
-    ).encode("utf-8")
-    request = Request(
-        "https://api.mistral.ai/v1/batch/jobs",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
-    try:
-        with urlopen(request, timeout=60) as response:
-            return json.loads(response.read())
-    except HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Mistral batch submission failed ({error.code}): {detail}"
-        ) from error
-    except URLError as error:
-        raise RuntimeError(f"Could not reach Mistral API: {error.reason}") from error
 
 
 def list_objects() -> list[dict]:
