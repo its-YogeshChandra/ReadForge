@@ -1,0 +1,66 @@
+"""FastAPI application for the ReadForge service."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, status
+from fastapi.responses import JSONResponse
+
+from readforge.controllers.doc_controller import (
+    UploadDocRequest,
+    UploadResponse,
+    upload_doc,
+)
+from readforge.utils.redis_utils import close_redis_client
+
+
+# Closes shared resources after FastAPI stops accepting requests.
+# Used to prevent Redis connections from remaining open during shutdown.
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Release shared application resources during shutdown."""
+    yield
+    await close_redis_client()
+
+
+app = FastAPI(
+    title="ReadForge API",
+    description="Queue documents stored in R2 for asynchronous processing.",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+
+# Returns a simple response confirming that the API process is running.
+# Used by monitoring systems and deployment health checks.
+@app.get("/health", tags=["Service"])
+async def health_check() -> dict[str, bool]:
+    """Return a lightweight service health response."""
+    return {"success": True}
+
+
+# Passes a validated document request to the upload controller for queueing.
+# Used to create asynchronous document-processing jobs through the HTTP API.
+@app.post(
+    "/documents",
+    response_model=UploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Documents"],
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": UploadResponse,
+            "description": "The document does not exist in R2.",
+        },
+        status.HTTP_502_BAD_GATEWAY: {
+            "model": UploadResponse,
+            "description": "R2 could not be reached.",
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": UploadResponse,
+            "description": "Redis could not accept the job.",
+        },
+    },
+)
+async def create_document_job(request: UploadDocRequest) -> JSONResponse:
+    """Queue an existing R2 document for processing."""
+    return await upload_doc(request)
