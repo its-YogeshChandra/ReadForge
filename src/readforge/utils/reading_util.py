@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import boto3
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,6 +41,23 @@ def _bucket_name() -> str:
     return bucket
 
 
+async def is_file_exist(file_name: str) -> bool:
+    """Return whether ``file_name`` exists in the configured R2 bucket.
+
+    Missing-object responses return ``False``. Other R2 errors, such as
+    authentication or network failures, are raised to the caller.
+    """
+    try:
+        _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
+        return True
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if error_code in {"404", "NoSuchKey", "NotFound"} or status_code == 404:
+            return False
+        raise
+
+
 def download_files_from_s3(file_name: str, dest_folder: str) -> str:
     """Download an object from R2 to a local path and return that path."""
     dest = Path(dest_folder) / file_name
@@ -50,6 +68,7 @@ def download_files_from_s3(file_name: str, dest_folder: str) -> str:
 
 def create_presigned_url(file_name: str) -> str:
     """Create an R2 GET URL that is valid for one hour."""
+    # check if file actually exist
     return _r2_client().generate_presigned_url(
         "get_object",
         Params={"Bucket": _bucket_name(), "Key": file_name},
@@ -64,9 +83,6 @@ class Presigned_url:
 
 def submit_ocr_batch(
     presigned_urls: Sequence[Presigned_url],
-    *,
-    api_key: str | None = None,
-    model: str = "mistral-ocr-latest",
 ) -> dict[str, Any]:
     """Submit one Mistral OCR batch request per presigned document URL.
 
@@ -79,9 +95,13 @@ def submit_ocr_batch(
     if len(presigned_urls) >= 10_000:
         raise ValueError("Inline OCR batches support fewer than 10,000 requests")
 
-    key = api_key or os.getenv("MISTRAL_API_KEY")
+    key = os.getenv("OCR_API_KEY")
     if not key:
-        raise ValueError("MISTRAL_API_KEY is not set")
+        raise ValueError("OCR_API_KEY is not set")
+    model_name = os.getenv("AI_MODEL_NAME")
+
+    if not model_name:
+        raise ValueError("MODEL_NAME is not set")
 
     # alternative to : creating batch vec ,iterating over presignedurls , pushing element into batch
     batch_requests = [
@@ -97,7 +117,7 @@ def submit_ocr_batch(
     payload = json.dumps(
         {
             "endpoint": "/v1/ocr",
-            "model": model,
+            "model": model_name,
             "requests": batch_requests,
             "timeout_hours": 24,
         }
