@@ -6,6 +6,8 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+import Quartz
+from urllib3 import response
 
 load_dotenv()
 
@@ -75,3 +77,28 @@ def list_objects() -> list[dict]:
     """List objects in the configured R2 bucket."""
     response = _r2_client().list_objects_v2(Bucket=_bucket_name())
     return response.get("Contents", [])
+
+
+#take the file name and spits the size of the file out of that 
+def get_file_size(file_name: str):
+    s3_client = _r2_client()
+    
+    #get object from the s3 and get the size of the file 
+    response = s3_client.get_object()
+    return 1024*1024
+
+
+#download page from pdf utils
+def download_page_from_pdf() : 
+    return None
+
+# the ocr request payload for pdf pages  
+class OcrRequest: 
+    file_name: str
+    file_data : Quartz.CGImageRef
+
+
+# ocr function
+
+def ocr_util(data: list[OcrRequest]  ) -> json:
+    

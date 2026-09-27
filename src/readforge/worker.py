@@ -15,4 +15,7 @@ def main() -> None:
         if jobs_vec is None:
             break
 
-        #
+        # download a load pdf into memory if the pdf is less then 50 mb
+        # if more then 50 mb load  certain pages of that pdf first into memory then execute
+
+        # call the ocr function from the utility
