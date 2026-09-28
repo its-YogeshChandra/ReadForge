@@ -100,8 +100,11 @@ async def is_file_exist(file_name: str) -> bool:
 def download_files_from_s3(file_name: str, dest_folder: str) -> str:
     """Download an object from R2 to a local path and return that path."""
     dest = Path(dest_folder) / file_name
+
     dest.parent.mkdir(parents=True, exist_ok=True)
+
     _r2_client().download_file(_bucket_name(), file_name, str(dest))
+
     return str(dest)
 
 
@@ -121,18 +124,25 @@ def list_objects() -> list[dict]:
     return response.get("Contents", [])
 
 
-#take the file name and spits the size of the file out of that 
+# take the file name and spits the size of the file out of that
 def get_file_size(file_name: str) -> int:
     """Return an R2 object's size in bytes without downloading it."""
+
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
+
     try:
         response = _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
     except (BotoCoreError, ClientError) as error:
+        # failed to read from media bucket
         raise PDFReadError(f"Could not read size for '{file_name}'") from error
+
     size = response.get("ContentLength")
+
+    # invalid file size check
     if not isinstance(size, int) or size < 0:
         raise PDFReadError("R2 returned an invalid file size")
+
     return size
 
 
@@ -145,6 +155,7 @@ def download_page_from_pdf(
     """Load a PDF into memory and return its one-indexed Core Graphics pages."""
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
+
     if max_file_size <= 0:
         raise ValueError("max_file_size must be greater than zero")
 
@@ -167,6 +178,7 @@ def download_page_from_pdf(
             raise
         except (BotoCoreError, ClientError, OSError) as error:
             raise PDFReadError(f"Could not download PDF '{file_name}'") from error
+
     if not isinstance(file_data, (bytes, bytearray, memoryview)):
         raise TypeError("file_data must be bytes-like")
 
@@ -207,24 +219,31 @@ def page_to_image(
     max_image_pixels: int = MAX_IMAGE_PIXELS,
 ) -> list[OcrRequest]:
     """Render PDF pages to CGImages suitable for Apple Vision."""
+
     if not pages:
         raise ValueError("At least one PDF page is required")
+
     if not isfinite(scale) or scale <= 0:
         raise ValueError("scale must be greater than zero")
+
     if max_image_pixels <= 0:
         raise ValueError("max_image_pixels must be greater than zero")
 
     # ponytail: this vector retains every bitmap; stream pages if large PDFs exceed memory.
     images: list[OcrRequest] = []
     color_space = Quartz.CGColorSpaceCreateDeviceRGB()
+
     for page in pages:
         if not isinstance(page, PdfPage):
             raise TypeError("pages must contain PdfPage values")
+
         bounds = Quartz.CGPDFPageGetBoxRect(page.file_data, Quartz.kCGPDFMediaBox)
         width = ceil(bounds.size.width * scale)
         height = ceil(bounds.size.height * scale)
+
         if width <= 0 or height <= 0:
             raise PageRenderError(f"PDF page {page.page_number} has invalid dimensions")
+
         if width * height > max_image_pixels:
             raise PageRenderError(
                 f"PDF page {page.page_number} exceeds the {max_image_pixels}-pixel limit"
@@ -249,14 +268,14 @@ def page_to_image(
         Quartz.CGContextDrawPDFPage(context, page.file_data)
         image = Quartz.CGBitmapContextCreateImage(context)
         if image is None:
-            raise PageRenderError(f"Could not create image for PDF page {page.page_number}")
+            raise PageRenderError(
+                f"Could not create image for PDF page {page.page_number}"
+            )
         images.append(OcrRequest(page.file_name, page.page_number, image))
     return images
 
 
-def ocr_util(
-    data: Sequence[OcrRequest], *, attempts: int = 3
-) -> list[OcrResponse]:
+def ocr_util(data: Sequence[OcrRequest], *, attempts: int = 3) -> list[OcrRespnse]:
     """OCR CGImages sequentially with Apple Vision, retrying transient failures."""
     if not data:
         raise ValueError("At least one OCR request is required")
@@ -267,35 +286,46 @@ def ocr_util(
     for payload in data:
         if not isinstance(payload, OcrRequest):
             raise TypeError("data must contain OcrRequest values")
+
         if not isinstance(payload.file_name, str) or not payload.file_name.strip():
             raise ValueError("OCR request file_name must not be empty")
+
         if payload.page_number <= 0:
             raise ValueError("OCR request page_number must be greater than zero")
+
         if payload.file_data is None:
             raise ValueError(f"OCR page {payload.page_number} has no image data")
 
         last_error: Exception | None = None
+
         for attempt in range(attempts):
             try:
                 request = Vision.VNRecognizeTextRequest.alloc().init()
+
                 request.setRecognitionLevel_(
                     Vision.VNRequestTextRecognitionLevelAccurate
                 )
+
                 request.setUsesLanguageCorrection_(True)
+
                 if hasattr(request, "setAutomaticallyDetectsLanguage_"):
                     request.setAutomaticallyDetectsLanguage_(True)
 
                 handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
                     payload.file_data, {}
                 )
+
                 succeeded, error = handler.performRequests_error_([request], None)
+
                 if not succeeded:
                     message = error.localizedDescription() if error else "unknown error"
                     raise RuntimeError(message)
 
                 lines = []
+
                 for observation in request.results() or []:
                     candidates = observation.topCandidates_(1)
+
                     if candidates:
                         candidate = candidates[0]
                         lines.append(
@@ -304,6 +334,7 @@ def ocr_util(
                                 "confidence": float(candidate.confidence()),
                             }
                         )
+
                 responses.append(
                     OcrResponse(
                         payload.file_name,
@@ -315,6 +346,7 @@ def ocr_util(
                     )
                 )
                 break
+
             except Exception as error:
                 last_error = error
                 if attempt + 1 < attempts:
