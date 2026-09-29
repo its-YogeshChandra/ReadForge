@@ -12,6 +12,10 @@ pyrightconfig.json
 
 #environment variable file 
 .env
+env.py
 
 #graphify 
 graphify-out
+
+# Local process IDs and logs
+.run/
