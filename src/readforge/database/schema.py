@@ -9,7 +9,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -49,6 +48,10 @@ class Document(Base):
         CheckConstraint("btrim(object_key) <> ''", name="documents_object_key_not_empty"),
         CheckConstraint("size_bytes >= 0", name="documents_size_bytes_valid"),
         CheckConstraint("page_count > 0", name="documents_page_count_valid"),
+        CheckConstraint(
+            "ocr_result IS NULL OR jsonb_typeof(ocr_result) = 'array'",
+            name="documents_ocr_result_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -61,6 +64,7 @@ class Document(Base):
     content_type: Mapped[str | None] = mapped_column(Text)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     page_count: Mapped[int | None] = mapped_column(Integer)
+    ocr_result: Mapped[list[dict] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -106,40 +110,15 @@ class Job(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class DocumentPage(Base):
-    __tablename__ = "document_pages"
-    __table_args__ = (
-        CheckConstraint("page_number > 0", name="document_pages_number_valid"),
-        CheckConstraint(
-            "jsonb_typeof(ocr_result) = 'object' "
-            "AND ocr_result ? 'text' "
-            "AND ocr_result ? 'lines' "
-            "AND jsonb_typeof(ocr_result -> 'text') = 'string' "
-            "AND jsonb_typeof(ocr_result -> 'lines') = 'array'",
-            name="document_pages_ocr_result_valid",
-        ),
-    )
-
-    document_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
-    )
-    page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ocr_result: Mapped[dict] = mapped_column(JSONB)
-
-
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         CheckConstraint("chunk_index >= 0", name="document_chunks_index_valid"),
+        CheckConstraint("page_number > 0", name="document_chunks_page_number_valid"),
         CheckConstraint("btrim(content) <> ''", name="document_chunks_content_not_empty"),
         CheckConstraint(
             "btrim(embedding_model) <> ''",
             name="document_chunks_embedding_model_not_empty",
-        ),
-        ForeignKeyConstraint(
-            ["document_id", "page_number"],
-            ["document_pages.document_id", "document_pages.page_number"],
-            ondelete="CASCADE",
         ),
         UniqueConstraint(
             "document_id",
@@ -151,7 +130,9 @@ class DocumentChunk(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    document_id: Mapped[UUID] = mapped_column(Uuid)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("documents.id", ondelete="CASCADE")
+    )
     page_number: Mapped[int] = mapped_column(Integer)
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)

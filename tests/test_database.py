@@ -1,6 +1,7 @@
 """Small checks for the SQLAlchemy schema without requiring PostgreSQL."""
 
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects.postgresql import JSONB
 
 from readforge.database.schema import Base
 
@@ -12,10 +13,11 @@ def test_database_schema_contains_ocr_and_vector_tables() -> None:
         "users",
         "documents",
         "jobs",
-        "document_pages",
         "document_chunks",
     }
+    assert isinstance(tables["documents"].c.ocr_result.type, JSONB)
     assert isinstance(tables["document_chunks"].c.embedding.type, Vector)
-    assert {
-        column.name for column in tables["document_pages"].primary_key.columns
-    } == {"document_id", "page_number"}
+    document_key = next(
+        iter(tables["document_chunks"].c.document_id.foreign_keys)
+    )
+    assert document_key.target_fullname == "documents.id"

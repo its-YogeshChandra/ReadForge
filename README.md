@@ -23,4 +23,4 @@ postgresql+psycopg://readforge:readforge@localhost:5432/readforge
 ```
 
 Redis remains the transient job queue. PostgreSQL stores users, documents,
-durable job state, page OCR JSON, and vector-backed document chunks.
+durable job state, document OCR JSON, and vector-backed document chunks.
