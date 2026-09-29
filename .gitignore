@@ -11,3 +11,6 @@ wheels/
 pyrightconfig.json
 
 .env
+
+#graphify 
+graphify-out
