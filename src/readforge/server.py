@@ -11,6 +11,7 @@ from readforge.controllers.doc_controller import (
     UploadResponse,
     upload_doc,
 )
+from readforge.database import close_database
 from readforge.utils.redis_utils import close_redis_client
 
 
@@ -21,6 +22,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Release shared application resources during shutdown."""
     yield
     await close_redis_client()
+    await close_database()
 
 
 app = FastAPI(
