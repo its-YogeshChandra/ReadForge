@@ -99,7 +99,13 @@ async def is_file_exist(file_name: str) -> bool:
 
 def download_files_from_s3(file_name: str, dest_folder: str) -> str:
     """Download an object from R2 to a local path and return that path."""
-    dest = Path(dest_folder) / file_name
+    if not isinstance(file_name, str) or not file_name.strip():
+        raise ValueError("file_name must not be empty")
+
+    destination_root = Path(dest_folder).resolve()
+    dest = (destination_root / file_name).resolve()
+    if not dest.is_relative_to(destination_root):
+        raise ValueError("file_name must stay inside the destination folder")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -150,47 +156,63 @@ def download_page_from_pdf(
     file_name: str,
     *,
     file_data: bytes | bytearray | memoryview | None = None,
+    file_path: str | os.PathLike[str] | None = None,
     max_file_size: int = MAX_PDF_BYTES,
 ) -> list[PdfPage]:
-    """Load a PDF into memory and return its one-indexed Core Graphics pages."""
+    """Load a PDF from R2, memory, or disk and return its Core Graphics pages."""
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
 
     if max_file_size <= 0:
         raise ValueError("max_file_size must be greater than zero")
 
-    if file_data is None:
-        try:
-            response = _r2_client().get_object(Bucket=_bucket_name(), Key=file_name)
-            size = response.get("ContentLength")
-            if isinstance(size, int) and size > max_file_size:
-                raise PDFReadError(
-                    f"PDF is {size} bytes; maximum is {max_file_size} bytes"
-                )
-            body = response.get("Body")
-            if body is None:
-                raise PDFReadError("R2 response did not contain a file body")
+    if file_data is not None and file_path is not None:
+        raise ValueError("Provide only one of file_data or file_path")
+
+    if file_path is not None:
+        path = Path(file_path)
+        if not path.is_file():
+            raise PDFReadError(f"PDF file '{path}' does not exist")
+        if path.stat().st_size == 0:
+            raise PDFReadError("PDF is empty")
+        provider = Quartz.CGDataProviderCreateWithFilename(str(path))
+        if provider is None:
+            raise PDFReadError(f"Could not open PDF file '{path}'")
+    else:
+        if file_data is None:
             try:
-                file_data = body.read(max_file_size + 1)
-            finally:
-                body.close()
-        except PDFReadError:
-            raise
-        except (BotoCoreError, ClientError, OSError) as error:
-            raise PDFReadError(f"Could not download PDF '{file_name}'") from error
+                response = _r2_client().get_object(
+                    Bucket=_bucket_name(), Key=file_name
+                )
+                size = response.get("ContentLength")
+                if isinstance(size, int) and size > max_file_size:
+                    raise PDFReadError(
+                        f"PDF is {size} bytes; maximum is {max_file_size} bytes"
+                    )
+                body = response.get("Body")
+                if body is None:
+                    raise PDFReadError("R2 response did not contain a file body")
+                try:
+                    file_data = body.read(max_file_size + 1)
+                finally:
+                    body.close()
+            except PDFReadError:
+                raise
+            except (BotoCoreError, ClientError, OSError) as error:
+                raise PDFReadError(f"Could not download PDF '{file_name}'") from error
 
-    if not isinstance(file_data, (bytes, bytearray, memoryview)):
-        raise TypeError("file_data must be bytes-like")
+        if not isinstance(file_data, (bytes, bytearray, memoryview)):
+            raise TypeError("file_data must be bytes-like")
 
-    pdf_data = bytes(file_data)
-    if not pdf_data:
-        raise PDFReadError("PDF is empty")
-    if len(pdf_data) > max_file_size:
-        raise PDFReadError(
-            f"PDF is {len(pdf_data)} bytes; maximum is {max_file_size} bytes"
-        )
+        pdf_data = bytes(file_data)
+        if not pdf_data:
+            raise PDFReadError("PDF is empty")
+        if len(pdf_data) > max_file_size:
+            raise PDFReadError(
+                f"PDF is {len(pdf_data)} bytes; maximum is {max_file_size} bytes"
+            )
+        provider = Quartz.CGDataProviderCreateWithCFData(pdf_data)
 
-    provider = Quartz.CGDataProviderCreateWithCFData(pdf_data)
     document = provider and Quartz.CGPDFDocumentCreateWithProvider(provider)
     if document is None:
         raise PDFReadError("File data is not a valid PDF")
@@ -275,7 +297,7 @@ def page_to_image(
     return images
 
 
-def ocr_util(data: Sequence[OcrRequest], *, attempts: int = 3) -> list[OcrRespnse]:
+def ocr_util(data: Sequence[OcrRequest], *, attempts: int = 3) -> list[OcrResponse]:
     """OCR CGImages sequentially with Apple Vision, retrying transient failures."""
     if not data:
         raise ValueError("At least one OCR request is required")

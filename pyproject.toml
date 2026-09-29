@@ -26,6 +26,7 @@ dependencies = [
 readforge = "readforge:main"
 readforge-ocr = "readforge.document_ai:main"
 readforge-db = "readforge.database:main"
+readforge-worker = "readforge.worker:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
