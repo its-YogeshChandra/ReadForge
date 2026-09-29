@@ -1655,6 +1655,7 @@ dependencies = [
     { name = "pyobjc-framework-vision" },
     { name = "python-dotenv" },
     { name = "redis" },
+    { name = "requests" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -1670,6 +1671,7 @@ requires-dist = [
     { name = "pyobjc-framework-vision", specifier = ">=12.2.2" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "redis", specifier = ">=8.1.0" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
 ]
 
