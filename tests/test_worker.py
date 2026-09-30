@@ -6,7 +6,7 @@ monkeypatched.
 
 Prerequisites before running:
     • PostgreSQL with pgvector is up:      ``docker compose up -d postgres``
-    • Schema is initialised:               ``uv run readforge-db``
+    • Schema is initialised:               ``uv run readforge-migrate``
     • Redis is running:                     ``docker compose up -d redis`` (or local)
     • R2 credentials are in ``.env``
     • CLIP embedding service is reachable at ``CLIP_API_URL``
@@ -44,8 +44,10 @@ from readforge.utils.reading_util import (
 from readforge.utils.redis_utils import (
     RedisJob,
     RedisJobRequest,
+    close_redis_client,
     create_job,
     fetch_jobs,
+    get_redis_client,
     send_to_dead_letter_queue,
 )
 from readforge.worker import (
@@ -75,6 +77,28 @@ def _run(coro):
 def _new_idem_key() -> str:
     """Return a fresh idempotency key that fits the 20-byte constraint."""
     return uuid4().hex[:20]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _isolated_redis_namespace():
+    """Keep test jobs separate and remove every Redis key created here."""
+    previous = os.environ.get("REDIS_KEY_NAMESPACE")
+    namespace = f"readforge:test-worker:{uuid4().hex}"
+    os.environ["REDIS_KEY_NAMESPACE"] = namespace
+    yield
+
+    async def _cleanup() -> None:
+        client = get_redis_client()
+        keys = [key async for key in client.scan_iter(match=f"{namespace}:*")]
+        if keys:
+            await client.delete(*keys)
+        await close_redis_client()
+
+    _run(_cleanup())
+    if previous is None:
+        os.environ.pop("REDIS_KEY_NAMESPACE", None)
+    else:
+        os.environ["REDIS_KEY_NAMESPACE"] = previous
 
 
 async def _ensure_user() -> UUID:
@@ -109,13 +133,10 @@ async def _create_redis_job(
     idem_key: str | None = None,
 ) -> RedisJob:
     """Push a real job through Redis and return the RedisJob."""
-    from readforge.utils.reading_util import create_presigned_url
-
-    signed_url = create_presigned_url(file_name)
     return await create_job(
         RedisJobRequest(
             file_name=file_name,
-            presigned_url=signed_url,
+            presigned_url="https://example.invalid/test-worker.pdf",
             idem_key=idem_key or _new_idem_key(),
         )
     )
@@ -147,7 +168,7 @@ def _make_minimal_pdf_pages():
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. POSITIVE TESTS — these conditions must pass
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════r══════════════════════════════════════════════
 
 
 # what : Gets the byte-size of a real R2 object without downloading the body.
@@ -203,19 +224,26 @@ class TestOcrPipeline:
         assert isinstance(results[0].file_data, dict)
         assert "text" in results[0].file_data
         assert "lines" in results[0].file_data
+        assert results[0].file_data["text"].strip()
 
     def test_ocr_pages_batches_correctly(self) -> None:
         size = get_file_size(EXISTING_MEDIA_FILE)
         if size > MAX_PDF_BYTES:
             pytest.skip("File exceeds in-memory limit")
-        pages = download_page_from_pdf(EXISTING_MEDIA_FILE)
-        results = _ocr_pages(pages[:2])
+        pages = download_page_from_pdf(EXISTING_MEDIA_FILE)[:2]
+        results = _ocr_pages(pages)
 
-        assert len(results) >= 1
+        assert len(results) == len(pages)
         assert all(isinstance(r, OcrResponse) for r in results)
 
     def test_read_and_ocr_produces_results(self) -> None:
-        job = _run(_create_redis_job())
+        job = RedisJob(
+            file_name=EXISTING_MEDIA_FILE,
+            presigned_url="https://example.invalid/test-worker.pdf",
+            idem_key=_new_idem_key(),
+            job_id=str(uuid4()),
+            created_at=datetime.now(UTC),
+        )
         size = get_file_size(EXISTING_MEDIA_FILE)
         results = _read_and_ocr(job, size)
 
@@ -382,11 +410,13 @@ class TestRedisOperations:
     def test_create_and_fetch_job(self) -> None:
         async def _test():
             job = await _create_redis_job()
+            jobs = await fetch_jobs(1)
 
             assert isinstance(job.job_id, str)
             assert UUID(job.job_id)
             assert job.file_name == EXISTING_MEDIA_FILE
             assert isinstance(job.created_at, datetime)
+            assert [queued.job_id for queued in jobs] == [job.job_id]
 
         _run(_test())
 
@@ -402,13 +432,12 @@ class TestRedisOperations:
 
     def test_fetch_jobs_returns_list(self) -> None:
         async def _test():
-            await _create_redis_job()
+            created = await _create_redis_job()
             jobs = await fetch_jobs(10)
 
             assert isinstance(jobs, list)
-            # may be empty if the job was already consumed; the type contract matters
-            for job in jobs:
-                assert isinstance(job, RedisJob)
+            assert all(isinstance(job, RedisJob) for job in jobs)
+            assert created.job_id in {job.job_id for job in jobs}
 
         _run(_test())
 
@@ -437,32 +466,33 @@ class TestProcessJob:
             document_id = await _ensure_document(EXISTING_MEDIA_FILE)
             job = await _create_redis_job()
 
-            await process_job(job)
+            try:
+                await process_job(job)
 
-            async with SessionLocal() as session:
-                doc = await session.get(Document, document_id)
-                assert doc.content_type == "application/pdf"
-                assert doc.size_bytes is not None and doc.size_bytes > 0
-                assert doc.page_count is not None and doc.page_count > 0
-                assert doc.ocr_result is not None and len(doc.ocr_result) > 0
+                async with SessionLocal() as session:
+                    doc = await session.get(Document, document_id)
+                    assert doc.content_type == "application/pdf"
+                    assert doc.size_bytes is not None and doc.size_bytes > 0
+                    assert doc.page_count is not None and doc.page_count > 0
+                    assert doc.ocr_result is not None and len(doc.ocr_result) > 0
 
-                db_job = await session.get(Job, UUID(job.job_id))
-                assert db_job.status == "completed"
-                assert db_job.completed_at is not None
+                    db_job = await session.get(Job, UUID(job.job_id))
+                    assert db_job.status == "completed"
+                    assert db_job.completed_at is not None
 
-                chunks = (
-                    await session.scalars(
-                        select(DocumentChunk).where(
-                            DocumentChunk.document_id == document_id
+                    chunks = (
+                        await session.scalars(
+                            select(DocumentChunk).where(
+                                DocumentChunk.document_id == document_id
+                            )
                         )
-                    )
-                ).all()
-                # some pages may have no text, so chunks >= 0 but the pipeline ran
-                for chunk in chunks:
-                    assert chunk.content.strip() != ""
-                    assert len(chunk.embedding) > 0
-
-            await _cleanup_job(job.job_id, document_id)
+                    ).all()
+                    assert chunks
+                    for chunk in chunks:
+                        assert chunk.content.strip() != ""
+                        assert len(chunk.embedding) > 0
+            finally:
+                await _cleanup_job(job.job_id, document_id)
 
         _run(_test())
 
@@ -592,9 +622,7 @@ class TestEmbedPagesNegative:
     def test_empty_text_pages_produce_no_chunks(self) -> None:
         results = [
             OcrResponse(file_name="test.pdf", page_number=1, file_data={"text": ""}),
-            OcrResponse(
-                file_name="test.pdf", page_number=2, file_data={"text": "   "}
-            ),
+            OcrResponse(file_name="test.pdf", page_number=2, file_data={"text": "   "}),
             OcrResponse(file_name="test.pdf", page_number=3, file_data={}),
         ]
         chunks = _embed_pages(results)
@@ -602,12 +630,8 @@ class TestEmbedPagesNegative:
 
     def test_non_string_text_is_skipped(self) -> None:
         results = [
-            OcrResponse(
-                file_name="test.pdf", page_number=1, file_data={"text": 12345}
-            ),
-            OcrResponse(
-                file_name="test.pdf", page_number=2, file_data={"text": None}
-            ),
+            OcrResponse(file_name="test.pdf", page_number=1, file_data={"text": 12345}),
+            OcrResponse(file_name="test.pdf", page_number=2, file_data={"text": None}),
         ]
         chunks = _embed_pages(results)
         assert chunks == []
@@ -615,7 +639,7 @@ class TestEmbedPagesNegative:
 
 # what : Verifies start_job rejects an invalid UUID job_id.
 # why  : A corrupted Redis job_id must raise WorkerJobError, not crash with a
-#         generic ValueError deep in the database layer.
+# generic ValueError deep in the database layer.
 class TestStartJobNegative:
     def test_invalid_uuid_raises(self) -> None:
         async def _test():
@@ -680,9 +704,7 @@ class TestSaveNegative:
         async def _test():
             fake_doc_id = uuid4()
             with pytest.raises(WorkerJobError, match="deleted while OCR was running"):
-                await save_ocr(
-                    fake_doc_id, 100, [{"page_number": 1, "text": "test"}]
-                )
+                await save_ocr(fake_doc_id, 100, [{"page_number": 1, "text": "test"}])
 
         _run(_test())
 
@@ -709,18 +731,14 @@ class TestSaveNegative:
 class TestRedisNegative:
     def test_fetch_zero_jobs_raises(self) -> None:
         async def _test():
-            with pytest.raises(
-                ValueError, match="job_count must be greater than zero"
-            ):
+            with pytest.raises(ValueError, match="job_count must be greater than zero"):
                 await fetch_jobs(0)
 
         _run(_test())
 
     def test_fetch_negative_jobs_raises(self) -> None:
         async def _test():
-            with pytest.raises(
-                ValueError, match="job_count must be greater than zero"
-            ):
+            with pytest.raises(ValueError, match="job_count must be greater than zero"):
                 await fetch_jobs(-1)
 
         _run(_test())

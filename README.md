@@ -20,8 +20,13 @@ Useful commands:
 ```bash
 make migrate  # after changing the SQLAlchemy schema
 make logs
-make stop
+make stop      # stop the app processes and all containers
+make restart   # stop everything, then start it again
+make down      # stop and remove containers; named data volumes remain
 ```
+
+The CLIP service runs at `http://localhost:8082/`. `make start` starts it when
+needed, and `make status` checks that its HTTP API is responding.
 
 ## Database
 

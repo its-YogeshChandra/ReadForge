@@ -45,7 +45,9 @@ class User(Base):
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
-        CheckConstraint("btrim(object_key) <> ''", name="documents_object_key_not_empty"),
+        CheckConstraint(
+            "btrim(object_key) <> ''", name="documents_object_key_not_empty"
+        ),
         CheckConstraint("size_bytes >= 0", name="documents_size_bytes_valid"),
         CheckConstraint("page_count > 0", name="documents_page_count_valid"),
         CheckConstraint(
@@ -115,7 +117,9 @@ class DocumentChunk(Base):
     __table_args__ = (
         CheckConstraint("chunk_index >= 0", name="document_chunks_index_valid"),
         CheckConstraint("page_number > 0", name="document_chunks_page_number_valid"),
-        CheckConstraint("btrim(content) <> ''", name="document_chunks_content_not_empty"),
+        CheckConstraint(
+            "btrim(content) <> ''", name="document_chunks_content_not_empty"
+        ),
         CheckConstraint(
             "btrim(embedding_model) <> ''",
             name="document_chunks_embedding_model_not_empty",
