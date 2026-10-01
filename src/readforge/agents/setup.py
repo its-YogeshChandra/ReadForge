@@ -38,50 +38,36 @@ class LLMProvider:
     @staticmethod
     def invoke_llm(system_prompt: str, request: TaskContent) -> NotesClassification:
         response = requests.post(
-            os.environ["AGENT_API_URL"],
+            os.getenv(
+                "NVIDIA_NIM_API_URL",
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+            ),
             headers={
                 "Content-Type": "application/json",
-                "x-goog-api-key": os.environ["GEMINI_API_KEY"],
+                "Authorization": f"Bearer {os.environ['NVIDIA_API_KEY']}",
             },
             json={
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": json.dumps(request)}],
-                    }
+                "model": os.environ["NVIDIA_NIM_MODEL"],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(request)},
                 ],
-                "generationConfig": {
-                    "response_mime_type": "application/json",
-                    "response_schema": {
-                        "type": "object",
-                        "properties": {
-                            "intent": {
-                                "type": "string",
-                                "enum": ["task", "bug", "backlog"],
-                            },
-                        },
-                        "required": ["intent"],
-                    },
-                },
+                "temperature": 0,
+                "max_tokens": 8,
+                "stream": False,
             },
             timeout=30,
         )
         response.raise_for_status()
 
         try:
-            result = json.loads(
-                response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            )
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
-            raise ValueError("Gemini returned an invalid structured response") from error
+            intent = response.json()["choices"][0]["message"]["content"].strip().lower()
+        except (KeyError, IndexError, TypeError, AttributeError) as error:
+            raise ValueError("NVIDIA NIM returned an invalid response") from error
 
-        if (
-            not isinstance(result, dict)
-            or result.get("intent") not in {"task", "bug", "backlog"}
-        ):
-            raise ValueError("Gemini returned an invalid note classification")
-        return result
+        if intent not in {"task", "bug", "backlog"}:
+            raise ValueError(f"NVIDIA NIM returned an invalid note intent: {intent!r}")
+        return {"intent": intent}
     
 
 
@@ -90,7 +76,7 @@ def infer_intent(state: NotesAgentsState):
     """ Use LLM to classify task intent , then route accordingly"""
     system_prompt = """
     You classify user requests as task, bug, or backlog.
-    Return the intent that best matches the supplied task data.
+    Return exactly one word: task, bug, or backlog. Do not add punctuation or explanation.
     """
     return {
         "classification": LLMProvider.invoke_llm(system_prompt, state["task_content"])
@@ -114,6 +100,7 @@ workflow_builder = StateGraph(NotesAgentsState)
 #adding nodes 
 workflow_builder.add_node("infer_intent", infer_intent)
 workflow_builder.add_node("create_task", create_task)
+
 workflow_builder.add_edge(START, "infer_intent")
 workflow_builder.add_edge("infer_intent", "create_task")
 workflow_builder.add_edge("create_task", END)
