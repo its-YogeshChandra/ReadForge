@@ -1,119 +1,137 @@
 # langgraph used to create statful agents
 # note taking ai agent
-from typing import Literal, TypedDict
-from langgraph.graph import MessagesState, StateGraph, MessageGraph, START, END
-from langchain_core.tools import tool
-from langgraph.checkpoint.memory import MemoySaver
-from langgraph.types import RetryPolicy
-from langchain.messages import HumanMessage
+import json
+import os
+from typing import Literal, NotRequired, TypedDict
+
 import requests
+from dotenv import load_dotenv
+from langgraph.graph import END, START, StateGraph
 
-def mock_llm(state: MessagesState):
-    return {}
+load_dotenv()
 
-#task content 
-class TaskContent :
+#task content
+class TaskContent(TypedDict):
     date: str
     main_task: str
      
 
 class NotesClassification(TypedDict):
-    intent: Literal["task", "bugs", "backlog"]
+    intent: Literal["task", "bug", "backlog"]
 
-class DraftedResponse: 
-   classification :str
-   start_date : str
-   task : str  
+class DraftedResponse(TypedDict):
+    classification: Literal["task", "bug", "backlog"]
+    start_date: str
+    task: str
 
 # shared states used by nodes
 class NotesAgentsState(TypedDict):
     task_content: TaskContent
-    #classification notes  
-    classification: NotesClassification | None
-    # generated content
-    drafted_response: DraftedResponse 
-
-  
+    classification: NotRequired[NotesClassification]
+    drafted_response: NotRequired[DraftedResponse]
 
 class LLMProvider:
 
     #goal : infer the user request,
-    #return : { "intent" : "task" | "bug" | "backlog" , "main_task" : "task description"}
+    #return : { "intent" : "task" | "bug" | "backlog" }
     #format should be exactly like this 
-    def invoke_llm( system_prompt: str, request: TaskContent ) :
-        # call the llm to give the classification
-        api_url = os.getenv("AGENT_API_URL")
-        #convert it according to gemini key 
-        try:  
-            response = requests.post(api_url, json ={
-                "request" : request
-            } , headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + os.getenv("api_key")
-        } )
-             
-            return True 
-        
-        #handle error
-        except (ConnectionError) as error:
-            print("connection_error : " , error)
-            return False
-    
+    @staticmethod
+    def invoke_llm(system_prompt: str, request: TaskContent) -> NotesClassification:
+        response = requests.post(
+            os.environ["AGENT_API_URL"],
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": os.environ["GEMINI_API_KEY"],
+            },
+            json={
+                "system_instruction": {"parts": [{"text": system_prompt}]},
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": json.dumps(request)}],
+                    }
+                ],
+                "generationConfig": {
+                    "response_mime_type": "application/json",
+                    "response_schema": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {
+                                "type": "string",
+                                "enum": ["task", "bug", "backlog"],
+                            },
+                        },
+                        "required": ["intent"],
+                    },
+                },
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
 
-         
+        try:
+            result = json.loads(
+                response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            )
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
+            raise ValueError("Gemini returned an invalid structured response") from error
+
+        if (
+            not isinstance(result, dict)
+            or result.get("intent") not in {"task", "bug", "backlog"}
+        ):
+            raise ValueError("Gemini returned an invalid note classification")
+        return result
+    
 
 
 #classifcation function 
-def infer_intent(state: EmailAgentState): 
+def infer_intent(state: NotesAgentsState): 
     """ Use LLM to classify task intent , then route accordingly"""
-    #create structured llm that returns email classification dict
-    llm = LLMProvider()
-    
-    #format the task on demand 
-    system_prompt = f""" 
-    you are a helpful assistant that classifies user requests into tasks , bugs or backlog items 
-    Classify the following user request and determine 
-    if its a task , bug or backlog item 
-    Provide classification including intent and main_task .
+    system_prompt = """
+    You classify user requests as task, bug, or backlog.
+    Return the intent that best matches the supplied task data.
     """
-    llm_response  = llm.invoke_llm(classification_prompt, state['task_content'])
-    
-    #updating data int the state
-    response =  DraftedResponse(
-        classification =  llm_response['intent'],
-        start_date = llm_response['date'],
-        task = llm_response['main_task']
-    )
-   
     return {
-        'drafted_response': response 
-    } 
+        "classification": LLMProvider.invoke_llm(system_prompt, state["task_content"])
+    }
 
-    
-def create_task(state: EmailAgentState) -> bool : 
-  #create task in the main function   
-  #read the drafted message from the email agent state 
-  task_data = state['drafted_response']
-  #call the tool 
-  response = write_to_file(task_data)
-  True
-
-
-@tool
-def write_to_file(state:NotesAgentsState ) -> bool : 
-    with open("notes.txt", "a") as f:
-        f.write(state['task_content'] + "\n")
-    return True 
+def create_task(state: NotesAgentsState) -> dict[str, DraftedResponse]:
+    task_content = state["task_content"]
+    response: DraftedResponse = {
+        "classification": state["classification"]["intent"],
+        "start_date": task_content["date"],
+        "task": task_content["main_task"],
+    }
+    with open("notes.txt", "a", encoding="utf-8") as file:
+        file.write(json.dumps(response) + "\n")
+    return {"drafted_response": response}
 
 
 
-workflow = StateGraph(NotesAgentsState)
+workflow_builder = StateGraph(NotesAgentsState)
 
 #adding nodes 
-workflow.add_Node("classify_intent",infer_intent)
-workflow.add_node("")
+workflow_builder.add_node("infer_intent", infer_intent)
+workflow_builder.add_node("create_task", create_task)
+workflow_builder.add_edge(START, "infer_intent")
+workflow_builder.add_edge("infer_intent", "create_task")
+workflow_builder.add_edge("create_task", END)
+
+workflow = workflow_builder.compile()
 
 
-#compile with checkpointer for persistence , in case run graph with local server 
-memory = MemorySaver()
-workflow = workflow.compile(checkpointer=memory)
+def main() -> None:
+    task_content: TaskContent = {
+        "date": input("Date: ").strip(),
+        "main_task": input("Task: ").strip(),
+    }
+    if not task_content["date"] or not task_content["main_task"]:
+        raise ValueError("Date and task are required")
+
+    result = workflow.invoke({"task_content": task_content})
+    print(json.dumps(result["drafted_response"], indent=2))
+
+
+if __name__ == "__main__":
+    main()
