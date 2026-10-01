@@ -42,10 +42,15 @@ def _ocr_pages(pages: list[PdfPage]) -> list[OcrResponse]:
 
 def _read_and_ocr(job: RedisJob, size_bytes: int) -> list[OcrResponse]:
     if size_bytes <= MAX_PDF_BYTES:
-        return _ocr_pages(download_page_from_pdf(job.file_name))
+        return _ocr_pages(
+            download_page_from_pdf(
+                job.file_name,
+                expected_checksum=job.checksum,
+            )
+        )
 
     with TemporaryDirectory(prefix="readforge-") as directory:
-        path = download_files_from_s3(job.file_name, directory)
+        path = download_files_from_s3(job.file_name, directory, job.checksum)
         pages = download_page_from_pdf(job.file_name, file_path=path)
         return _ocr_pages(pages)
 

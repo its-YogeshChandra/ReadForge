@@ -37,6 +37,7 @@ class RedisJobRequest(BaseModel):
     file_name: str = Field(min_length=1)
     presigned_url: str = Field(min_length=1)
     idem_key: str = Field(min_length=1)
+    checksum: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
 
 
 class RedisJob(RedisJobRequest):

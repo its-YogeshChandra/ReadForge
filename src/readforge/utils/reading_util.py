@@ -2,9 +2,12 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+import hashlib
+import hmac
 from math import ceil, isfinite
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 import time
 from typing import Any
 
@@ -22,6 +25,10 @@ MAX_IMAGE_PIXELS = 20_000_000
 
 class PDFReadError(RuntimeError):
     """The PDF could not be downloaded or parsed safely."""
+
+
+class FileTamperingError(PDFReadError):
+    """The downloaded file did not match its trusted SHA-256 checksum."""
 
 
 class PageRenderError(RuntimeError):
@@ -97,8 +104,22 @@ async def is_file_exist(file_name: str) -> bool:
         raise
 
 
-def download_files_from_s3(file_name: str, dest_folder: str) -> str:
-    """Download an object from R2 to a local path and return that path."""
+def _verify_sha256(file_name: str, actual: str, expected: str) -> None:
+    expected = expected.lower()
+    if len(expected) != 64 or any(
+        character not in "0123456789abcdef" for character in expected
+    ):
+        raise ValueError("checksum must be a 64-character SHA-256 hexadecimal value")
+    if not hmac.compare_digest(actual, expected):
+        raise FileTamperingError(
+            f"File tampering detected for '{file_name}': SHA-256 checksum mismatch"
+        )
+
+
+def download_files_from_s3(
+    file_name: str, dest_folder: str, expected_checksum: str
+) -> str:
+    """Stream an R2 object to disk and expose it only after checksum verification."""
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
 
@@ -109,7 +130,34 @@ def download_files_from_s3(file_name: str, dest_folder: str) -> str:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    _r2_client().download_file(_bucket_name(), file_name, str(dest))
+    body = None
+    partial_path: Path | None = None
+    try:
+        response = _r2_client().get_object(Bucket=_bucket_name(), Key=file_name)
+        body = response.get("Body")
+        if body is None:
+            raise PDFReadError("R2 response did not contain a file body")
+
+        digest = hashlib.sha256()
+        with NamedTemporaryFile(
+            mode="wb",
+            dir=dest.parent,
+            prefix=f".{dest.name}.",
+            suffix=".part",
+            delete=False,
+        ) as partial:
+            partial_path = Path(partial.name)
+            while chunk := body.read(1024 * 1024):
+                digest.update(chunk)
+                partial.write(chunk)
+
+        _verify_sha256(file_name, digest.hexdigest(), expected_checksum)
+        partial_path.replace(dest)
+    finally:
+        if body is not None:
+            body.close()
+        if partial_path is not None:
+            partial_path.unlink(missing_ok=True)
 
     return str(dest)
 
@@ -157,6 +205,7 @@ def download_page_from_pdf(
     *,
     file_data: bytes | bytearray | memoryview | None = None,
     file_path: str | os.PathLike[str] | None = None,
+    expected_checksum: str | None = None,
     max_file_size: int = MAX_PDF_BYTES,
 ) -> list[PdfPage]:
     """Load a PDF from R2, memory, or disk and return its Core Graphics pages."""
@@ -210,6 +259,12 @@ def download_page_from_pdf(
         if len(pdf_data) > max_file_size:
             raise PDFReadError(
                 f"PDF is {len(pdf_data)} bytes; maximum is {max_file_size} bytes"
+            )
+        if expected_checksum is not None:
+            _verify_sha256(
+                file_name,
+                hashlib.sha256(pdf_data).hexdigest(),
+                expected_checksum,
             )
         provider = Quartz.CGDataProviderCreateWithCFData(pdf_data)
 

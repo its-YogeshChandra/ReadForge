@@ -11,6 +11,7 @@ Prerequisites before running:
     • R2 credentials are in ``.env``
     • CLIP embedding service is reachable at ``CLIP_API_URL``
     • ``EXISTING_MEDIA_FILE`` points to a real PDF in the R2 ``datasets`` bucket
+    • ``EXISTING_MEDIA_SHA256`` contains that PDF's trusted SHA-256 checksum
     • macOS with Apple Vision framework
 
 Run with:
@@ -61,6 +62,7 @@ from readforge.worker import (
 # ── configuration ─────────────────────────────────────────────────────────
 # Replace with a real PDF that exists in the configured R2 bucket.
 EXISTING_MEDIA_FILE = "Fintech-Edge-April-2018.pdf"
+EXISTING_MEDIA_CHECKSUM = os.getenv("EXISTING_MEDIA_SHA256", "0" * 64)
 
 # Replace with a key that definitely does NOT exist.
 MISSING_MEDIA_FILE = "DOES_NOT_EXIST__test_worker.pdf"
@@ -138,6 +140,7 @@ async def _create_redis_job(
             file_name=file_name,
             presigned_url="https://example.invalid/test-worker.pdf",
             idem_key=idem_key or _new_idem_key(),
+            checksum=EXISTING_MEDIA_CHECKSUM,
         )
     )
 
@@ -237,10 +240,13 @@ class TestOcrPipeline:
         assert all(isinstance(r, OcrResponse) for r in results)
 
     def test_read_and_ocr_produces_results(self) -> None:
+        if EXISTING_MEDIA_CHECKSUM == "0" * 64:
+            pytest.skip("EXISTING_MEDIA_SHA256 is not configured")
         job = RedisJob(
             file_name=EXISTING_MEDIA_FILE,
             presigned_url="https://example.invalid/test-worker.pdf",
             idem_key=_new_idem_key(),
+            checksum=EXISTING_MEDIA_CHECKSUM,
             job_id=str(uuid4()),
             created_at=datetime.now(UTC),
         )
@@ -461,6 +467,8 @@ class TestProcessJob:
         clip_url = os.getenv("CLIP_API_URL", "")
         if not clip_url:
             pytest.skip("CLIP_API_URL is not configured")
+        if EXISTING_MEDIA_CHECKSUM == "0" * 64:
+            pytest.skip("EXISTING_MEDIA_SHA256 is not configured")
 
         async def _test():
             document_id = await _ensure_document(EXISTING_MEDIA_FILE)
@@ -771,6 +779,7 @@ class TestProcessJobNegative:
                 file_name=ghost_key,
                 presigned_url="https://example.com/fake",
                 idem_key=_new_idem_key(),
+                checksum="0" * 64,
                 job_id=str(uuid4()),
                 created_at=datetime.now(UTC),
             )

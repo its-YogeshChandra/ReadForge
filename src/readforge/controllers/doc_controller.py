@@ -31,6 +31,7 @@ class UploadDocRequest(BaseModel):
 
     file_name: str = Field(min_length=1)
     idem_key: str = Field(min_length=1)
+    checksum: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
 
     @field_validator("idem_key")
     @classmethod
@@ -87,6 +88,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
                 file_name=request.file_name,
                 presigned_url=signed_url,
                 idem_key=request.idem_key,
+                checksum=request.checksum,
             )
         )
     except (RedisError, RuntimeError):

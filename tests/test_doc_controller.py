@@ -21,6 +21,7 @@ EXISTING_MEDIA_FILE = "Fintech-Edge-April-2018.pdf"
 
 # Replace this with an object key that definitely does not exist in the bucket.
 MISSING_MEDIA_FILE = "REPLACE_WITH_MISSING_MEDIA_FILE.pdf"
+VALID_CHECKSUM = "0" * 64
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ def test_upload_existing_document_returns_202(api_client: TestClient) -> None:
         json={
             "file_name": EXISTING_MEDIA_FILE,
             "idem_key": _new_idempotency_key(),
+            "checksum": VALID_CHECKSUM,
         },
     )
 
@@ -83,7 +85,11 @@ def test_repeated_idempotency_key_returns_same_job(
     api_client: TestClient,
 ) -> None:
     idem_key = _new_idempotency_key()
-    payload = {"file_name": EXISTING_MEDIA_FILE, "idem_key": idem_key}
+    payload = {
+        "file_name": EXISTING_MEDIA_FILE,
+        "idem_key": idem_key,
+        "checksum": VALID_CHECKSUM,
+    }
 
     first_response = api_client.post("/documents", json=payload)
     second_response = api_client.post("/documents", json=payload)
@@ -103,6 +109,7 @@ def test_upload_accepts_twenty_byte_idempotency_key(
         json={
             "file_name": EXISTING_MEDIA_FILE,
             "idem_key": _new_idempotency_key(),
+            "checksum": VALID_CHECKSUM,
         },
     )
 
@@ -123,6 +130,7 @@ def test_missing_document_returns_404(api_client: TestClient) -> None:
         json={
             "file_name": MISSING_MEDIA_FILE,
             "idem_key": _new_idempotency_key(),
+            "checksum": VALID_CHECKSUM,
         },
     )
 
@@ -139,7 +147,7 @@ def test_missing_document_returns_404(api_client: TestClient) -> None:
 def test_missing_idempotency_key_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
-        json={"file_name": EXISTING_MEDIA_FILE},
+        json={"file_name": EXISTING_MEDIA_FILE, "checksum": VALID_CHECKSUM},
     )
 
     _assert_validation_error(
@@ -155,7 +163,11 @@ def test_missing_idempotency_key_returns_422(api_client: TestClient) -> None:
 def test_oversized_idempotency_key_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
-        json={"file_name": EXISTING_MEDIA_FILE, "idem_key": "a" * 21},
+        json={
+            "file_name": EXISTING_MEDIA_FILE,
+            "idem_key": "a" * 21,
+            "checksum": VALID_CHECKSUM,
+        },
     )
 
     _assert_validation_error(
@@ -173,7 +185,11 @@ def test_multibyte_idempotency_key_over_twenty_bytes_returns_422(
 ) -> None:
     response = api_client.post(
         "/documents",
-        json={"file_name": EXISTING_MEDIA_FILE, "idem_key": "é" * 11},
+        json={
+            "file_name": EXISTING_MEDIA_FILE,
+            "idem_key": "é" * 11,
+            "checksum": VALID_CHECKSUM,
+        },
     )
 
     _assert_validation_error(
@@ -192,6 +208,7 @@ def test_unexpected_request_field_returns_422(api_client: TestClient) -> None:
         json={
             "file_name": EXISTING_MEDIA_FILE,
             "idem_key": _new_idempotency_key(),
+            "checksum": VALID_CHECKSUM,
             "priority": "admin",
         },
     )
@@ -209,7 +226,11 @@ def test_unexpected_request_field_returns_422(api_client: TestClient) -> None:
 def test_empty_file_name_returns_422(api_client: TestClient) -> None:
     response = api_client.post(
         "/documents",
-        json={"file_name": "", "idem_key": _new_idempotency_key()},
+        json={
+            "file_name": "",
+            "idem_key": _new_idempotency_key(),
+            "checksum": VALID_CHECKSUM,
+        },
     )
 
     _assert_validation_error(

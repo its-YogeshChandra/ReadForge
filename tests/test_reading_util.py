@@ -1,5 +1,7 @@
 """Checks for the in-memory PDF → CGImage → Vision OCR pipeline."""
 
+import hashlib
+from io import BytesIO
 from types import SimpleNamespace
 
 from Foundation import NSMutableData
@@ -92,6 +94,12 @@ def test_ocr_retries_then_returns_json_compatible_output(monkeypatch) -> None:
 def test_pipeline_rejects_invalid_inputs() -> None:
     with pytest.raises(reading.PDFReadError, match="not a valid PDF"):
         reading.download_page_from_pdf("bad.pdf", file_data=b"not a pdf")
+    with pytest.raises(reading.FileTamperingError, match="File tampering detected"):
+        reading.download_page_from_pdf(
+            "test.pdf",
+            file_data=_pdf_bytes(),
+            expected_checksum="0" * 64,
+        )
     with pytest.raises(ValueError, match="At least one PDF page"):
         reading.page_to_image([])
     with pytest.raises(ValueError, match="At least one OCR request"):
@@ -109,3 +117,34 @@ def test_get_file_size_uses_object_metadata(monkeypatch) -> None:
     monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
 
     assert reading.get_file_size("file.pdf") == 123
+
+
+def test_verified_download_only_keeps_matching_file(monkeypatch, tmp_path) -> None:
+    file_data = b"trusted file content"
+    client = SimpleNamespace(
+        get_object=lambda **_kwargs: {"Body": BytesIO(file_data)}
+    )
+    monkeypatch.setattr(reading, "_r2_client", lambda: client)
+    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+
+    path = reading.download_files_from_s3(
+        "file.pdf",
+        str(tmp_path),
+        hashlib.sha256(file_data).hexdigest(),
+    )
+
+    assert path == str(tmp_path / "file.pdf")
+    assert (tmp_path / "file.pdf").read_bytes() == file_data
+
+
+def test_tampered_download_removes_partial_file(monkeypatch, tmp_path) -> None:
+    client = SimpleNamespace(
+        get_object=lambda **_kwargs: {"Body": BytesIO(b"tampered content")}
+    )
+    monkeypatch.setattr(reading, "_r2_client", lambda: client)
+    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+
+    with pytest.raises(reading.FileTamperingError, match="File tampering detected"):
+        reading.download_files_from_s3("file.pdf", str(tmp_path), "0" * 64)
+
+    assert list(tmp_path.iterdir()) == []
