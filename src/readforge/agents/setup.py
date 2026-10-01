@@ -11,6 +11,11 @@ import requests
 def mock_llm(state: MessagesState):
     return {}
 
+#task content 
+class TaskContent :
+    date: str
+    main_task: str
+     
 
 class NotesClassification(TypedDict):
     intent: Literal["task", "bugs", "backlog"]
@@ -18,71 +23,55 @@ class NotesClassification(TypedDict):
 
 # shared states used by nodes
 class NotesAgentsState(TypedDict):
-    task_content: str
-    start_date: str
-    end_data: str
-
-    # classifying result
+    task_content: TaskContent
+    #classification notes  
     classification: NotesClassification | None
-   
-    # raw search | api result
-    user_query: list[str]
-    
     # generated content
     drafted_response: str | None
     messages : list[str] | None
 
 
-
 class LLMProvider:
-    
-    def give_llm_structure(state: EmailAgentState):
-        #call the llm to give the structure 
-        api_url = os.getenv("OPENAI_API_URL") 
-        response = requests.post(LLMProvider.api_url, json ={
-            """ give me the ouput in the form of json with the following structure 
-            """,
-            { "type": "NotesClassification"}
-        } , headers = {
+
+    #goal : infer the user request,
+    #return : { "intent" : "task" | "bug" | "backlog" , "main_task" : "task description"}
+    #format should be exactly like this 
+    def invoke_llm( system_prompt: str, request: TaskContent ) :
+        # call the llm to give the classification
+        api_url = os.getenv("AGENT_API_URL")
+        #convert it according to gemini key 
+        try:  
+            response = requests.post(api_url, json ={
+                "request" : request
+            } , headers = {
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")
+            "Authorization": "Bearer " + os.getenv("api_key")
         } )
-        
-        #if failed to provide structure to the llm
-        return {"type": "NotesClassification"}
-    
-    def call_llm()  : 
-        classification = structured_llm.invoke()
+             
+            return True
+        #handle error
+        except (ConnectionError) as error:
+            print("connection_error : " , error)
+            return False
     
 
          
-        
-#reading and classification node 
-#reading function 
-def read_task(state: NotesAgentsState) -> dict : 
-    """Extract and parse task content"""
-    #in production  this would connect to your email service 
-    return {
-        "messages": [HumanMessage(content = f"Processing email : {state['task_content']}" )]
-    }
+
 
 #classifcation function 
-def classify_intent(state: EmailAgentState)-> Command[Literal["task", "bug", "backlog"]] : 
+def infer_intent(state: EmailAgentState): 
     """ Use LLM to classify task intent , then route accordingly"""
     #create structured llm that returns email classification dict
-    structured_llm = give_llm_structure()
-
+    llm = LLMProvider()
+    
     #format the task on demand 
-    classification_prompt = f""" Classify the following user request and determine 
+    system_prompt = f""" 
+    you are a helpful assistant that classifies user requests into tasks , bugs or backlog items 
+    Classify the following user request and determine 
     if its a task , bug or backlog item 
-    
-    user request = {state['task_content']} 
-    
-    Provide classification including intent, start_date, end_date, and main_task .
+    Provide classification including intent and main_task .
     """
-    classfication = structured_llm.invoke(prompt="",state ={
-        "task_content": state['task_content']
-    })
+    classfication = llm.invoke_llm(classification_prompt, state['task_content'])
     
     return classfication
 
@@ -95,11 +84,15 @@ def classify_intent(state: EmailAgentState)-> Command[Literal["task", "bug", "ba
         goto = "backlog" 
     else :
         raise ValueError("Invalid classification") 
+    
+    #updating data int the state
+    state['classification'] = goto
+     
 
-    return Command{
-        update ={"classification": classification},
-        goto =  goto
-    }
+    
+def create_task(state: EmailAgentState) -> bool : 
+         
+
 
 @tool
 def write_to_file(state:NotesAgentsState ) -> bool : 
@@ -111,8 +104,8 @@ def write_to_file(state:NotesAgentsState ) -> bool :
 
 workflow = StateGraph(NotesAgentsState)
 
-workflow.add_Node("read_task",read_task)
-workflow.add_Node("classify_intent",classify_intent)
+workflow.add_Node("classify_intent",infer_intent)
+workflow.add_node("")
 
 #compile with checkpointer for persistence , in case run graph with local server 
 memory = MemorySaver()
