@@ -6,7 +6,6 @@ import {
   uploadPart,
   completeMultipartUpload,
   abortMultipartUpload,
-  R2_PUBLIC_URL,
 } from '@/utils/storage/r2Client';
 import {
   createSession,
@@ -154,14 +153,12 @@ export async function POST(request: NextRequest) {
       await putObject(objectKey, buffer, fileType, checksum);
 
       const queued = await queueDocument(objectKey, checksum);
-      const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${objectKey}` : undefined;
 
       return NextResponse.json({
         success: true,
         message: 'File uploaded and queued for integrity verification.',
         documentId: queued.document_id,
         jobId: queued.job_id,
-        ...(publicUrl && { url: publicUrl }),
       });
     }
 
@@ -268,14 +265,12 @@ export async function POST(request: NextRequest) {
       deleteSession(checksum, fileName);
 
       const queued = await queueDocument(session.key, checksum);
-      const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${session.key}` : undefined;
 
       return NextResponse.json({
         success: true,
         message: 'File uploaded and queued for integrity verification.',
         documentId: queued.document_id,
         jobId: queued.job_id,
-        ...(publicUrl && { url: publicUrl }),
       });
     }
 

@@ -595,8 +595,8 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
                 transition-all duration-200
                 ${
                   !selectedFile || isProcessing
-                    ? 'bg-[--color-charcoal]/20 text-[--color-muted-grey] cursor-not-allowed'
-                    : 'bg-[--color-charcoal] text-white hover:bg-[--color-charcoal]/90 active:scale-[0.98]'
+                    ? 'bg-[#D1D1D1] text-[#8E8E8E] cursor-not-allowed'
+                    : 'bg-[#222222] text-white shadow-md hover:shadow-lg hover:bg-[#333333] active:scale-[0.98]'
                 }
               `}
             >

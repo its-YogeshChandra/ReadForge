@@ -10,26 +10,34 @@ import {
 /* ─────────────────────── R2 Client ─────────────────────── */
 
 /**
- * Pre-configured S3-compatible client for Cloudflare R2.
+ * Lazily-initialised S3-compatible client for Cloudflare R2.
  *
- * Reads credentials and bucket config from environment variables.
- * The endpoint follows the R2 format:
- *   `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`
+ * The client is created on first use rather than at module-import time,
+ * ensuring that environment variables have been resolved by the runtime
+ * before the SDK reads them.
  */
-const r2Client = new S3Client({
-  region: 'auto',
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-  },
-});
+let _r2Client: S3Client | null = null;
+
+function getR2Client(): S3Client {
+  if (!_r2Client) {
+    _r2Client = new S3Client({
+      region: 'auto',
+      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY ?? '',
+        secretAccessKey: process.env.R2_SECRET_ACESS_KEY ?? '',
+      },
+    });
+  }
+  return _r2Client;
+}
 
 /** The R2 bucket name to upload documents to. */
-export const R2_BUCKET = process.env.R2_BUCKET_NAME!;
+export function getR2Bucket(): string {
+  return process.env.R2_BUCKET_NAME ?? '';
+}
 
-/** Optional public URL base for constructing download links. */
-export const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL ?? '';
+
 
 /* ─────────────────── Simple PUT Upload ─────────────────── */
 
@@ -50,9 +58,9 @@ export async function putObject(
   mimeType: string,
   checksum: string,
 ) {
-  await r2Client.send(
+  await getR2Client().send(
     new PutObjectCommand({
-      Bucket: R2_BUCKET,
+      Bucket: getR2Bucket(),
       Key: key,
       Body: body,
       ContentType: mimeType,
@@ -78,9 +86,9 @@ export async function createMultipartUpload(
   mimeType: string,
   checksum: string,
 ): Promise<string> {
-  const response = await r2Client.send(
+  const response = await getR2Client().send(
     new CreateMultipartUploadCommand({
-      Bucket: R2_BUCKET,
+      Bucket: getR2Bucket(),
       Key: key,
       ContentType: mimeType,
       Metadata: {
@@ -111,9 +119,9 @@ export async function uploadPart(
   partNumber: number,
   body: Buffer,
 ): Promise<string> {
-  const response = await r2Client.send(
+  const response = await getR2Client().send(
     new UploadPartCommand({
-      Bucket: R2_BUCKET,
+      Bucket: getR2Bucket(),
       Key: key,
       UploadId: uploadId,
       PartNumber: partNumber,
@@ -140,9 +148,9 @@ export async function completeMultipartUpload(
   uploadId: string,
   parts: { ETag: string; PartNumber: number }[],
 ) {
-  await r2Client.send(
+  await getR2Client().send(
     new CompleteMultipartUploadCommand({
-      Bucket: R2_BUCKET,
+      Bucket: getR2Bucket(),
       Key: key,
       UploadId: uploadId,
       MultipartUpload: {
@@ -159,9 +167,9 @@ export async function completeMultipartUpload(
  * @param uploadId - The multipart UploadId to abort.
  */
 export async function abortMultipartUpload(key: string, uploadId: string) {
-  await r2Client.send(
+  await getR2Client().send(
     new AbortMultipartUploadCommand({
-      Bucket: R2_BUCKET,
+      Bucket: getR2Bucket(),
       Key: key,
       UploadId: uploadId,
     }),
