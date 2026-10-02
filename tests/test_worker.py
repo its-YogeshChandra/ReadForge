@@ -1010,7 +1010,7 @@ class TestProcessJobNegative:
 #         pass
 
 # ── SECURITY-10 : R2 credentials in environment without rotation ──────────
-# The R2 client reads CLOUDFLARE_ACCESS_KEY and CLOUDFLARE_SECRET_KEY from
+# The R2 client reads R2_ACCESS_KEY and R2_SECRET_ACCESS_KEY from
 # the environment once at import time (via load_dotenv). There is no
 # credential rotation, expiry checking, or vault integration. Leaked .env
 # files grant permanent bucket access.
