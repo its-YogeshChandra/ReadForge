@@ -19,6 +19,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -144,3 +145,38 @@ class DocumentChunk(Base):
     # ponytail: unconstrained until the embedding model fixes its dimension;
     # change to Vector(N) and add HNSW when approximate search is needed.
     embedding: Mapped[list[float]] = mapped_column(Vector())
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(messages) = 'array'",
+            name="conversations_messages_valid",
+        ),
+        Index(
+            "conversations_document_updated_idx",
+            "document_id",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, server_default=func.gen_random_uuid()
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("documents.id", ondelete="CASCADE")
+    )
+    # Each item is validated at the API boundary and contains role, content,
+    # created_at, and an optional agent name.
+    messages: Mapped[list[dict]] = mapped_column(
+        MutableList.as_mutable(JSONB),
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
