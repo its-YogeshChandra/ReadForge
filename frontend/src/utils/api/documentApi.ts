@@ -47,11 +47,13 @@ export async function uploadDocumentChunk(
       body: formData,
     });
 
-    if (!response.ok) {
-      throw new Error(response.statusText);
-    }
-
     const data: UploadResponse = await response.json();
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data.message || response.statusText,
+      };
+    }
     return data;
   } catch (error) {
     const message =

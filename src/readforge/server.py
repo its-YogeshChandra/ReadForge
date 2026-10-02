@@ -60,6 +60,10 @@ async def health_check() -> dict[str, bool]:
             "model": UploadResponse,
             "description": "The document does not exist in R2.",
         },
+        status.HTTP_409_CONFLICT: {
+            "model": UploadResponse,
+            "description": "The R2 object checksum did not match.",
+        },
         status.HTTP_502_BAD_GATEWAY: {
             "model": UploadResponse,
             "description": "R2 could not be reached.",

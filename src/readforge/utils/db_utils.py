@@ -21,6 +21,33 @@ class ConversationDocumentMismatchError(ValueError):
     """A conversation belongs to a different document."""
 
 
+class ChecksumConflictError(ValueError):
+    """Stored integrity data conflicts with a newly supplied checksum."""
+
+
+async def ensure_document(object_key: str, checksum: str) -> UUID:
+    """Create an anonymous document row or validate an existing one."""
+    async with SessionLocal() as session:
+        document = await session.scalar(
+            select(Document).where(Document.object_key == object_key)
+        )
+        if document is None:
+            document = Document(
+                user_id=None,
+                object_key=object_key,
+                checksum=checksum,
+            )
+            session.add(document)
+        elif document.checksum not in {None, checksum}:
+            raise ChecksumConflictError(
+                "Document checksum conflicts with the stored checksum"
+            )
+        else:
+            document.checksum = checksum
+        await session.commit()
+        return document.id
+
+
 async def append_conversation_messages(
     document_id: UUID,
     conversation_id: UUID | None,
@@ -76,6 +103,7 @@ async def start_job(
     object_key: str,
     idempotency_key: str,
     created_at: datetime,
+    checksum: str | None = None,
 ) -> tuple[UUID, UUID] | None:
     """Mark a database job as processing and return its IDs."""
     try:
@@ -91,6 +119,13 @@ async def start_job(
             raise WorkerJobError(
                 f"Document '{object_key}' does not exist in PostgreSQL"
             )
+        trusted_checksum = checksum or document.checksum
+        if checksum and document.checksum not in {None, checksum}:
+            raise WorkerJobError(
+                "Redis and PostgreSQL documents have different checksums"
+            )
+        if checksum:
+            document.checksum = checksum
 
         database_job = await session.get(Job, parsed_job_id)
         if database_job is not None and database_job.status == "completed":
@@ -100,6 +135,7 @@ async def start_job(
                 id=parsed_job_id,
                 document_id=document.id,
                 idempotency_key=idempotency_key,
+                checksum=trusted_checksum,
                 attempt_count=0,
                 created_at=created_at,
             )
@@ -108,6 +144,12 @@ async def start_job(
             raise WorkerJobError(
                 "Redis and PostgreSQL jobs reference different documents"
             )
+        elif checksum and database_job.checksum not in {None, checksum}:
+            raise WorkerJobError(
+                "Redis and PostgreSQL jobs have different checksums"
+            )
+        elif checksum:
+            database_job.checksum = checksum
 
         database_job.status = "processing"
         database_job.attempt_count += 1

@@ -85,12 +85,13 @@ async def process_job(job: RedisJob) -> None:
         job.file_name,
         job.idem_key,
         job.created_at,
+        checksum=job.checksum,
     )
     if identifiers is None:
         return
 
     job_id, document_id = identifiers
-    size_bytes = get_file_size(job.file_name)
+    size_bytes = get_file_size(job.file_name, expected_checksum=job.checksum)
     results = _read_and_ocr(job, size_bytes)
     ocr_result = [
         {"page_number": result.page_number, **result.file_data} for result in results

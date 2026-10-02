@@ -15,6 +15,41 @@ import {
   purgeStale,
 } from '@/utils/storage/multipartStore';
 
+interface QueueResponse {
+  success: boolean;
+  message: string;
+  job_id: string | null;
+  document_id: string | null;
+}
+
+async function queueDocument(
+  objectKey: string,
+  checksum: string,
+): Promise<QueueResponse> {
+  const response = await fetch(
+    new URL('/documents', process.env.READFORGE_API_URL),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_name: objectKey,
+        idem_key: crypto
+          .createHash('sha256')
+          .update(objectKey)
+          .digest('hex')
+          .slice(0, 20),
+        checksum,
+      }),
+      cache: 'no-store',
+    },
+  );
+  const result = (await response.json()) as QueueResponse;
+  if (!response.ok || !result.document_id || !result.job_id) {
+    throw new Error(result.message || 'Could not queue the uploaded document.');
+  }
+  return result;
+}
+
 /**
  * POST /api/documents/upload
  *
@@ -46,7 +81,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
 
     const file = formData.get('file') as File | null;
-    const checksum = formData.get('checksum') as string | null;
+    const checksumValue = formData.get('checksum') as string | null;
     const fileName = formData.get('fileName') as string | null;
     const fileType = formData.get('fileType') as string | null;
     const chunkIndexStr = formData.get('chunkIndex') as string | null;
@@ -54,18 +89,34 @@ export async function POST(request: NextRequest) {
     const fileSizeStr = formData.get('fileSize') as string | null;
 
     /* ── Validate required fields ── */
-    if (!file || !checksum || !fileName || !fileType || !chunkIndexStr || !totalChunksStr || !fileSizeStr) {
+    if (!file || !checksumValue || !fileName || !fileType || !chunkIndexStr || !totalChunksStr || !fileSizeStr) {
       return NextResponse.json(
         { success: false, message: 'Missing required fields in upload payload.' },
         { status: 400 },
       );
     }
 
+    if (!/^[0-9a-fA-F]{64}$/.test(checksumValue)) {
+      return NextResponse.json(
+        { success: false, message: 'Checksum must be a SHA-256 hex digest.' },
+        { status: 400 },
+      );
+    }
+    const checksum = checksumValue.toLowerCase();
+
     const chunkIndex = parseInt(chunkIndexStr, 10);
     const totalChunks = parseInt(totalChunksStr, 10);
     const fileSize = parseInt(fileSizeStr, 10);
 
-    if (isNaN(chunkIndex) || isNaN(totalChunks) || isNaN(fileSize)) {
+    if (
+      !Number.isInteger(chunkIndex) ||
+      !Number.isInteger(totalChunks) ||
+      !Number.isInteger(fileSize) ||
+      totalChunks <= 0 ||
+      chunkIndex < 0 ||
+      chunkIndex >= totalChunks ||
+      fileSize <= 0
+    ) {
       return NextResponse.json(
         { success: false, message: 'Invalid numeric fields in upload payload.' },
         { status: 400 },
@@ -102,13 +153,14 @@ export async function POST(request: NextRequest) {
     if (totalChunks === 1) {
       await putObject(objectKey, buffer, fileType, checksum);
 
-      const documentId = checksumPrefix;
+      const queued = await queueDocument(objectKey, checksum);
       const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${objectKey}` : undefined;
 
       return NextResponse.json({
         success: true,
-        message: 'File uploaded successfully.',
-        documentId,
+        message: 'File uploaded and queued for integrity verification.',
+        documentId: queued.document_id,
+        jobId: queued.job_id,
         ...(publicUrl && { url: publicUrl }),
       });
     }
@@ -215,13 +267,14 @@ export async function POST(request: NextRequest) {
       // Clean up the session
       deleteSession(checksum, fileName);
 
-      const documentId = checksumPrefix;
-      const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${objectKey}` : undefined;
+      const queued = await queueDocument(session.key, checksum);
+      const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${session.key}` : undefined;
 
       return NextResponse.json({
         success: true,
-        message: 'File uploaded successfully.',
-        documentId,
+        message: 'File uploaded and queued for integrity verification.',
+        documentId: queued.document_id,
+        jobId: queued.job_id,
         ...(publicUrl && { url: publicUrl }),
       });
     }

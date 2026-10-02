@@ -76,6 +76,8 @@ export interface UploadResponse {
   message: string;
   /** The unique identifier assigned to the uploaded document, present on final success. */
   documentId?: string;
+  /** The background integrity/OCR job identifier, present on final success. */
+  jobId?: string;
 }
 
 /**

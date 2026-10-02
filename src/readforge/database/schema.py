@@ -66,15 +66,20 @@ class Document(Base):
             "OR effective_start <= effective_end",
             name="documents_effective_dates_valid",
         ),
+        CheckConstraint(
+            "checksum IS NULL OR checksum ~ '^[0-9a-f]{64}$'",
+            name="documents_checksum_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
         Uuid, primary_key=True, server_default=func.gen_random_uuid()
     )
-    user_id: Mapped[UUID] = mapped_column(
+    user_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="CASCADE")
     )
     object_key: Mapped[str] = mapped_column(Text, unique=True)
+    checksum: Mapped[str | None] = mapped_column(Text)
     content_type: Mapped[str | None] = mapped_column(Text)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     page_count: Mapped[int | None] = mapped_column(Integer)
@@ -111,6 +116,10 @@ class Job(Base):
             name="jobs_status_valid",
         ),
         CheckConstraint("attempt_count >= 0", name="jobs_attempt_count_valid"),
+        CheckConstraint(
+            "checksum IS NULL OR checksum ~ '^[0-9a-f]{64}$'",
+            name="jobs_checksum_valid",
+        ),
         UniqueConstraint(
             "document_id", "idempotency_key", name="jobs_document_idempotency_unique"
         ),
@@ -129,6 +138,7 @@ class Job(Base):
         Uuid, ForeignKey("documents.id", ondelete="CASCADE")
     )
     idempotency_key: Mapped[str] = mapped_column(Text)
+    checksum: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, server_default=text("'queued'"))
     attempt_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     error_message: Mapped[str | None] = mapped_column(Text)

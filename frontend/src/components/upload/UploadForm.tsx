@@ -348,6 +348,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
       /* ── Phase 2: Chunking & Upload ── */
       const boundaries = calculateChunkBoundaries(file.size);
       const totalChunks = boundaries.length;
+      let documentId: string | undefined;
 
       for (let i = 0; i < boundaries.length; i++) {
         if (abortRef.current) return;
@@ -393,6 +394,19 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
           ]);
           return;
         }
+        documentId = result.documentId ?? documentId;
+      }
+
+      if (!documentId) {
+        setUploadProgress({
+          status: 'error',
+          progress: 100,
+          message: 'Upload completed but integrity verification was not queued.',
+          fileName: file.name,
+          fileSize: file.size,
+          checksum,
+        });
+        return;
       }
 
       /* ── Success ── */
@@ -412,7 +426,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
 
       // Notify parent so the chat window can be activated
       onUploadComplete?.({
-        documentId: checksum.substring(0, 12),
+        documentId,
         fileName: file.name,
         checksum,
       });

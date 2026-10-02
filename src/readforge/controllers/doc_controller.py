@@ -7,10 +7,14 @@ from fastapi import status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
+from readforge.utils.db_utils import ChecksumConflictError, ensure_document
 from readforge.utils.reading_util import (
+    FileTamperingError,
     create_presigned_url,
     is_file_exist,
+    verify_object_checksum_metadata,
 )
 from readforge.utils.redis_utils import RedisJobRequest, create_job
 
@@ -19,9 +23,10 @@ logger = logging.getLogger(__name__)
 # HTTP status codes used by this controller:
 # 202 Accepted: The document was successfully added to the processing queue.
 # 404 Not Found: The requested document does not exist in R2.
+# 409 Conflict: Stored or supplied checksums do not agree.
 # 422 Unprocessable Entity: FastAPI rejected an invalid request body.
 # 502 Bad Gateway: R2 could not be reached or returned an unexpected error.
-# 503 Service Unavailable: Redis could not accept the processing job.
+# 503 Service Unavailable: PostgreSQL or Redis could not accept the job.
 
 
 class UploadDocRequest(BaseModel):
@@ -32,6 +37,11 @@ class UploadDocRequest(BaseModel):
     file_name: str = Field(min_length=1)
     idem_key: str = Field(min_length=1)
     checksum: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+    @field_validator("checksum")
+    @classmethod
+    def normalize_checksum(cls, value: str) -> str:
+        return value.lower()
 
     @field_validator("idem_key")
     @classmethod
@@ -52,6 +62,7 @@ class UploadResponse(BaseModel):
     success: bool
     message: str
     job_id: str | None = None
+    document_id: str | None = None
 
 
 def _response(status_code: int, payload: UploadResponse) -> JSONResponse:
@@ -71,7 +82,17 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
                 ),
             )
 
+        verify_object_checksum_metadata(request.file_name, request.checksum)
         signed_url = create_presigned_url(request.file_name)
+    except FileTamperingError:
+        logger.warning("Checksum mismatch for R2 object %s", request.file_name)
+        return _response(
+            status.HTTP_409_CONFLICT,
+            UploadResponse(
+                success=False,
+                message="File integrity verification failed",
+            ),
+        )
     except (BotoCoreError, ClientError):
         logger.exception("Could not access R2 object %s", request.file_name)
         return _response(
@@ -83,6 +104,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
         )
 
     try:
+        document_id = await ensure_document(request.file_name, request.checksum)
         job = await create_job(
             RedisJobRequest(
                 file_name=request.file_name,
@@ -91,7 +113,16 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
                 checksum=request.checksum,
             )
         )
-    except (RedisError, RuntimeError):
+    except ChecksumConflictError:
+        logger.warning("Stored checksum conflict for %s", request.file_name)
+        return _response(
+            status.HTTP_409_CONFLICT,
+            UploadResponse(
+                success=False,
+                message="File integrity verification failed",
+            ),
+        )
+    except (RedisError, SQLAlchemyError, RuntimeError):
         logger.exception("Could not queue R2 object %s", request.file_name)
         return _response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -107,5 +138,6 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             success=True,
             message="Document queued for processing",
             job_id=job.job_id,
+            document_id=str(document_id),
         ),
     )

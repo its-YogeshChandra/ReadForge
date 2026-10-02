@@ -119,6 +119,20 @@ def test_get_file_size_uses_object_metadata(monkeypatch) -> None:
     assert reading.get_file_size("file.pdf") == 123
 
 
+def test_get_file_size_rejects_metadata_checksum_before_download(monkeypatch) -> None:
+    client = SimpleNamespace(
+        head_object=lambda **_kwargs: {
+            "ContentLength": 123,
+            "Metadata": {"sha256-checksum": "f" * 64},
+        }
+    )
+    monkeypatch.setattr(reading, "_r2_client", lambda: client)
+    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+
+    with pytest.raises(reading.FileTamperingError, match="File tampering detected"):
+        reading.get_file_size("file.pdf", expected_checksum="0" * 64)
+
+
 def test_verified_download_only_keeps_matching_file(monkeypatch, tmp_path) -> None:
     file_data = b"trusted file content"
     client = SimpleNamespace(

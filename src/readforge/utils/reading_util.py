@@ -116,6 +116,18 @@ def _verify_sha256(file_name: str, actual: str, expected: str) -> None:
         )
 
 
+def _stored_sha256(response: dict[str, Any]) -> str:
+    metadata = response.get("Metadata")
+    value = metadata.get("sha256-checksum") if isinstance(metadata, dict) else None
+    return value.lower() if isinstance(value, str) else ""
+
+
+def verify_object_checksum_metadata(file_name: str, expected_checksum: str) -> None:
+    """Reject an R2 object whose stored checksum differs before downloading it."""
+    response = _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
+    _verify_sha256(file_name, _stored_sha256(response), expected_checksum)
+
+
 def download_files_from_s3(
     file_name: str, dest_folder: str, expected_checksum: str
 ) -> str:
@@ -179,7 +191,7 @@ def list_objects() -> list[dict]:
 
 
 # take the file name and spits the size of the file out of that
-def get_file_size(file_name: str) -> int:
+def get_file_size(file_name: str, expected_checksum: str | None = None) -> int:
     """Return an R2 object's size in bytes without downloading it."""
 
     if not isinstance(file_name, str) or not file_name.strip():
@@ -192,6 +204,9 @@ def get_file_size(file_name: str) -> int:
         raise PDFReadError(f"Could not read size for '{file_name}'") from error
 
     size = response.get("ContentLength")
+
+    if expected_checksum is not None:
+        _verify_sha256(file_name, _stored_sha256(response), expected_checksum)
 
     # invalid file size check
     if not isinstance(size, int) or size < 0:

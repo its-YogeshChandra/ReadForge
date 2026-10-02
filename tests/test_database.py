@@ -27,7 +27,10 @@ def test_database_schema_contains_ocr_and_vector_tables() -> None:
         "effective_end",
         "document_type",
         "source_verified",
+        "checksum",
     }.issubset(tables["documents"].c.keys())
+    assert "checksum" in tables["jobs"].c
+    assert tables["documents"].c.user_id.nullable
     assert isinstance(tables["document_chunks"].c.embedding.type, Vector)
     assert isinstance(tables["conversations"].c.messages.type, JSONB)
     document_key = next(
