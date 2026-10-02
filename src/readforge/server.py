@@ -2,14 +2,21 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
+from readforge.controllers.chat_controller import ChatRequest, ChatResponse, chat
 from readforge.controllers.doc_controller import (
     UploadDocRequest,
     UploadResponse,
     upload_doc,
+)
+from readforge.controllers.document_metadata_controller import (
+    DocumentMetadataRequest,
+    DocumentMetadataResponse,
+    update_document_metadata,
 )
 from readforge.database import close_database
 from readforge.utils.redis_utils import close_redis_client
@@ -66,3 +73,26 @@ async def health_check() -> dict[str, bool]:
 async def create_document_job(request: UploadDocRequest) -> JSONResponse:
     """Queue an existing R2 document for processing."""
     return await upload_doc(request)
+
+
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    tags=["Conversations"],
+)
+async def create_chat_message(request: ChatRequest) -> ChatResponse:
+    """Answer one question using evidence retrieved from an uploaded document."""
+    return await chat(request)
+
+
+@app.patch(
+    "/documents/{document_id}/metadata",
+    response_model=DocumentMetadataResponse,
+    tags=["Documents"],
+)
+async def patch_document_metadata(
+    document_id: UUID,
+    request: DocumentMetadataRequest,
+) -> DocumentMetadataResponse:
+    """Store plan metadata used to ground later agent answers."""
+    return await update_document_metadata(document_id, request)

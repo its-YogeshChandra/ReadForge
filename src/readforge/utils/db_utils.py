@@ -6,11 +6,69 @@ from uuid import UUID
 from sqlalchemy import delete, select
 
 from readforge.database import SessionLocal
-from readforge.database.schema import Document, DocumentChunk, Job
+from readforge.database.schema import Conversation, Document, DocumentChunk, Job
 
 
 class WorkerJobError(RuntimeError):
     """A queued job cannot be persisted safely."""
+
+
+class ConversationNotFoundError(LookupError):
+    """The requested conversation does not exist."""
+
+
+class ConversationDocumentMismatchError(ValueError):
+    """A conversation belongs to a different document."""
+
+
+async def append_conversation_messages(
+    document_id: UUID,
+    conversation_id: UUID | None,
+    messages: list[dict],
+) -> UUID:
+    """Create a conversation or atomically append messages to one."""
+    async with SessionLocal() as session:
+        if conversation_id is None:
+            conversation = Conversation(
+                document_id=document_id,
+                messages=list(messages),
+            )
+            session.add(conversation)
+        else:
+            conversation = await session.scalar(
+                select(Conversation)
+                .where(Conversation.id == conversation_id)
+                .with_for_update()
+            )
+            if conversation is None:
+                raise ConversationNotFoundError("Conversation was not found")
+            if conversation.document_id != document_id:
+                raise ConversationDocumentMismatchError(
+                    "Conversation belongs to a different document"
+                )
+            conversation.messages.extend(messages)
+
+        await session.commit()
+        return conversation.id
+
+
+async def load_conversation_messages(
+    document_id: UUID,
+    conversation_id: UUID | None,
+) -> list[dict]:
+    """Load a conversation after confirming that it belongs to the document."""
+    if conversation_id is None:
+        return []
+
+    async with SessionLocal() as session:
+        conversation = await session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError("Conversation was not found")
+        if conversation.document_id != document_id:
+            raise ConversationDocumentMismatchError(
+                "Conversation belongs to a different document"
+            )
+        return list(conversation.messages)
 
 
 async def start_job(

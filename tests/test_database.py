@@ -17,6 +17,17 @@ def test_database_schema_contains_ocr_and_vector_tables() -> None:
         "conversations",
     }
     assert isinstance(tables["documents"].c.ocr_result.type, JSONB)
+    assert {
+        "insurer",
+        "plan_name",
+        "plan_type",
+        "jurisdiction_state",
+        "coverage_year",
+        "effective_start",
+        "effective_end",
+        "document_type",
+        "source_verified",
+    }.issubset(tables["documents"].c.keys())
     assert isinstance(tables["document_chunks"].c.embedding.type, Vector)
     assert isinstance(tables["conversations"].c.messages.type, JSONB)
     document_key = next(

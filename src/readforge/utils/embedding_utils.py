@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from math import isfinite
 import os
+import time
 
 from dotenv import load_dotenv
 import requests
@@ -40,20 +41,33 @@ def embed_text(data: EmbeddingsPayload) -> list[float]:
     if not api_url:
         raise EmbeddingServiceError("CLIP_API_URL is not set")
 
-    try:
-        response = requests.post(
-            f"{api_url}embedding/text",
-            json={"texts": [data.text_data]},
-            timeout=(5, 120),
-        )
-        response.raise_for_status()
-        body = response.json()
-    except requests.exceptions.JSONDecodeError as error:
-        raise EmbeddingServiceError(
-            "Embedding service returned invalid JSON"
-        ) from error
-    except requests.RequestException as error:
-        raise EmbeddingServiceError("Embedding request failed") from error
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                f"{api_url}embedding/text",
+                json={"texts": [data.text_data]},
+                timeout=(5, 120),
+            )
+            response.raise_for_status()
+            body = response.json()
+            break
+        except requests.exceptions.JSONDecodeError as error:
+            raise EmbeddingServiceError(
+                "Embedding service returned invalid JSON"
+            ) from error
+        except requests.RequestException as error:
+            status_code = getattr(error.response, "status_code", None)
+            retryable = status_code is None or status_code in {
+                429,
+                500,
+                502,
+                503,
+                504,
+            }
+            if retryable and attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            raise EmbeddingServiceError("Embedding request failed") from error
 
     if (
         not isinstance(body, list)

@@ -1,12 +1,14 @@
 """SQLAlchemy models for documents, OCR output, jobs, and embeddings."""
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -55,6 +57,15 @@ class Document(Base):
             "ocr_result IS NULL OR jsonb_typeof(ocr_result) = 'array'",
             name="documents_ocr_result_valid",
         ),
+        CheckConstraint(
+            "coverage_year IS NULL OR coverage_year BETWEEN 2000 AND 2100",
+            name="documents_coverage_year_valid",
+        ),
+        CheckConstraint(
+            "effective_start IS NULL OR effective_end IS NULL "
+            "OR effective_start <= effective_end",
+            name="documents_effective_dates_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -68,6 +79,21 @@ class Document(Base):
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     page_count: Mapped[int | None] = mapped_column(Integer)
     ocr_result: Mapped[list[dict] | None] = mapped_column(JSONB)
+    insurer: Mapped[str | None] = mapped_column(Text)
+    plan_name: Mapped[str | None] = mapped_column(Text)
+    plan_type: Mapped[str | None] = mapped_column(Text)
+    jurisdiction_state: Mapped[str | None] = mapped_column(Text)
+    coverage_year: Mapped[int | None] = mapped_column(Integer)
+    effective_start: Mapped[date | None] = mapped_column(Date)
+    effective_end: Mapped[date | None] = mapped_column(Date)
+    document_type: Mapped[str] = mapped_column(
+        Text,
+        server_default=text("'eoc'"),
+    )
+    source_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

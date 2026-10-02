@@ -94,6 +94,7 @@ export default function UploadPage() {
       {uploadResult && showChat && (
         <div className="mt-6">
           <ChatWindow
+            key={uploadResult.documentId}
             documentId={uploadResult.documentId}
             documentName={uploadResult.fileName}
           />

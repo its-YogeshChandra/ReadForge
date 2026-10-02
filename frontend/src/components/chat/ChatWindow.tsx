@@ -135,6 +135,37 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         }`}
       >
         {message.content}
+        {message.result && (
+          <div className="mt-3 border-t border-[--color-muted-light]/60 pt-2 text-xs">
+            {message.result.overall_evidence_score !== null && (
+              <p className="font-medium">
+                Evidence score: {message.result.overall_evidence_score}/100 ·{' '}
+                {message.result.overall_confidence_level} confidence
+              </p>
+            )}
+            {message.result.results.flatMap((result) =>
+              result.findings.flatMap((finding) =>
+                finding.citations.map((citation) => (
+                  <p
+                    key={`${result.agent}-${citation.evidence_id}`}
+                    className="mt-1 text-[--color-muted-grey]"
+                  >
+                    {result.agent.replaceAll('_', ' ')} · page{' '}
+                    {citation.page_number}
+                  </p>
+                )),
+              ),
+            )}
+            {message.result.requires_human_review && (
+              <p className="mt-2 font-medium text-amber-700">
+                Human review recommended
+              </p>
+            )}
+            <p className="mt-2 text-[--color-muted-grey]">
+              {message.result.notice}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -155,10 +186,18 @@ export default function ChatWindow({
   documentId,
   documentName,
 }: ChatWindowProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [
+    {
+      id: 'system_welcome',
+      role: 'system',
+      content: `Document "${documentName}" loaded — you can now ask questions about it.`,
+      timestamp: new Date().toISOString(),
+    },
+  ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [conversationId, setConversationId] = useState<string>();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -170,20 +209,11 @@ export default function ChatWindow({
     return () => clearTimeout(timer);
   }, []);
 
-  /* ── System welcome message on mount ── */
+  /* ── Focus input after entrance animation ── */
   useEffect(() => {
-    const welcomeMessage: ChatMessage = {
-      id: 'system_welcome',
-      role: 'system',
-      content: `Document "${documentName}" loaded — you can now ask questions about it.`,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages([welcomeMessage]);
-
-    // Focus input after entrance animation
     const focusTimer = setTimeout(() => inputRef.current?.focus(), 500);
     return () => clearTimeout(focusTimer);
-  }, [documentName]);
+  }, []);
 
   /* ── Auto-scroll to bottom ── */
   useEffect(() => {
@@ -214,12 +244,13 @@ export default function ChatWindow({
       const response = await sendChatMessage({
         message: text,
         documentId,
-        history: [...messages, userMessage],
+        conversationId,
       });
 
       setIsLoading(false);
 
       if (response.success) {
+        setConversationId(response.conversationId);
         setMessages((prev) => [...prev, response.reply]);
       } else {
         setMessages((prev) => [
@@ -235,7 +266,7 @@ export default function ChatWindow({
         ]);
       }
     },
-    [inputValue, isLoading, documentId, messages],
+    [inputValue, isLoading, documentId, conversationId],
   );
 
   return (
@@ -285,6 +316,7 @@ export default function ChatWindow({
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Ask a question about your document..."
               disabled={isLoading}
+              maxLength={8000}
               className="
                 flex-1 px-4 py-2.5 text-sm text-[--color-charcoal]
                 bg-[--color-bg-warm] rounded-[--radius-pill]
