@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="ReadForge API",
-    description="Queue documents stored in R2 for asynchronous processing.",
+    description="Queue documents stored in the media bucket for processing.",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -58,15 +58,15 @@ async def health_check() -> dict[str, bool]:
     responses={
         status.HTTP_404_NOT_FOUND: {
             "model": UploadResponse,
-            "description": "The document does not exist in R2.",
+            "description": "The document does not exist in the media bucket.",
         },
         status.HTTP_409_CONFLICT: {
             "model": UploadResponse,
-            "description": "The R2 object checksum did not match.",
+            "description": "The media object checksum did not match.",
         },
         status.HTTP_502_BAD_GATEWAY: {
             "model": UploadResponse,
-            "description": "R2 could not be reached.",
+            "description": "The media bucket could not be reached.",
         },
         status.HTTP_503_SERVICE_UNAVAILABLE: {
             "model": UploadResponse,

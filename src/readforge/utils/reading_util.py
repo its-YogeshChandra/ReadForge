@@ -1,4 +1,4 @@
-"""R2 download, PDF rendering, and macOS Vision OCR utilities."""
+"""Media download, PDF rendering, and macOS Vision OCR utilities."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -11,11 +11,12 @@ from tempfile import NamedTemporaryFile
 import time
 from typing import Any
 
-import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 import Quartz
 import Vision
+
+from readforge.utils.media_bucket import get_bucket_name, get_client
 
 load_dotenv()
 
@@ -61,40 +62,14 @@ class OcrResponse:
     file_data: dict[str, Any]
 
 
-def _r2_client():
-    """Create an R2 client from the standard Cloudflare credential variables."""
-    account_id = os.getenv("ACCOUNT_ID")
-    access_key = os.getenv("CLOUDFLARE_ACCESS_KEY")
-    secret_key = os.getenv("CLOUDFLARE_SECRET_KEY")
-    if not all((account_id, access_key, secret_key)):
-        raise ValueError(
-            "ACCOUNT_ID, CLOUDFLARE_ACCESS_KEY, and CLOUDFLARE_SECRET_KEY must be set"
-        )
-
-    return boto3.client(
-        "s3",
-        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name="auto",
-    )
-
-
-def _bucket_name() -> str:
-    bucket = os.getenv("BUCKET_NAME")
-    if not bucket:
-        raise ValueError("BUCKET_NAME is not set")
-    return bucket
-
-
 async def is_file_exist(file_name: str) -> bool:
-    """Return whether ``file_name`` exists in the configured R2 bucket.
+    """Return whether ``file_name`` exists in the configured media bucket.
 
-    Missing-object responses return ``False``. Other R2 errors, such as
+    Missing-object responses return ``False``. Other storage errors, such as
     authentication or network failures, are raised to the caller.
     """
     try:
-        _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
+        get_client().head_object(Bucket=get_bucket_name(), Key=file_name)
         return True
     except ClientError as error:
         error_code = error.response.get("Error", {}).get("Code")
@@ -123,15 +98,15 @@ def _stored_sha256(response: dict[str, Any]) -> str:
 
 
 def verify_object_checksum_metadata(file_name: str, expected_checksum: str) -> None:
-    """Reject an R2 object whose stored checksum differs before downloading it."""
-    response = _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
+    """Reject an object whose stored checksum differs before downloading it."""
+    response = get_client().head_object(Bucket=get_bucket_name(), Key=file_name)
     _verify_sha256(file_name, _stored_sha256(response), expected_checksum)
 
 
-def download_files_from_s3(
+def download_file_from_media_bucket(
     file_name: str, dest_folder: str, expected_checksum: str
 ) -> str:
-    """Stream an R2 object to disk and expose it only after checksum verification."""
+    """Stream an object to disk and expose it only after checksum verification."""
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
 
@@ -145,10 +120,10 @@ def download_files_from_s3(
     body = None
     partial_path: Path | None = None
     try:
-        response = _r2_client().get_object(Bucket=_bucket_name(), Key=file_name)
+        response = get_client().get_object(Bucket=get_bucket_name(), Key=file_name)
         body = response.get("Body")
         if body is None:
-            raise PDFReadError("R2 response did not contain a file body")
+            raise PDFReadError("Media bucket response did not contain a file body")
 
         digest = hashlib.sha256()
         with NamedTemporaryFile(
@@ -175,32 +150,30 @@ def download_files_from_s3(
 
 
 def create_presigned_url(file_name: str) -> str:
-    """Create an R2 GET URL that is valid for one hour."""
-    # check if file actually exist
-    return _r2_client().generate_presigned_url(
+    """Create a media-bucket GET URL that is valid for one hour."""
+    return get_client().generate_presigned_url(
         "get_object",
-        Params={"Bucket": _bucket_name(), "Key": file_name},
+        Params={"Bucket": get_bucket_name(), "Key": file_name},
         ExpiresIn=3600,
     )
 
 
 def list_objects() -> list[dict]:
-    """List objects in the configured R2 bucket."""
-    response = _r2_client().list_objects_v2(Bucket=_bucket_name())
+    """List objects in the configured media bucket."""
+    response = get_client().list_objects_v2(Bucket=get_bucket_name())
     return response.get("Contents", [])
 
 
 # take the file name and spits the size of the file out of that
 def get_file_size(file_name: str, expected_checksum: str | None = None) -> int:
-    """Return an R2 object's size in bytes without downloading it."""
+    """Return an object's size in bytes without downloading it."""
 
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
 
     try:
-        response = _r2_client().head_object(Bucket=_bucket_name(), Key=file_name)
+        response = get_client().head_object(Bucket=get_bucket_name(), Key=file_name)
     except (BotoCoreError, ClientError) as error:
-        # failed to read from media bucket
         raise PDFReadError(f"Could not read size for '{file_name}'") from error
 
     size = response.get("ContentLength")
@@ -210,7 +183,7 @@ def get_file_size(file_name: str, expected_checksum: str | None = None) -> int:
 
     # invalid file size check
     if not isinstance(size, int) or size < 0:
-        raise PDFReadError("R2 returned an invalid file size")
+        raise PDFReadError("Media bucket returned an invalid file size")
 
     return size
 
@@ -223,7 +196,7 @@ def download_page_from_pdf(
     expected_checksum: str | None = None,
     max_file_size: int = MAX_PDF_BYTES,
 ) -> list[PdfPage]:
-    """Load a PDF from R2, memory, or disk and return its Core Graphics pages."""
+    """Load a PDF from the media bucket, memory, or disk."""
     if not isinstance(file_name, str) or not file_name.strip():
         raise ValueError("file_name must not be empty")
 
@@ -245,8 +218,8 @@ def download_page_from_pdf(
     else:
         if file_data is None:
             try:
-                response = _r2_client().get_object(
-                    Bucket=_bucket_name(), Key=file_name
+                response = get_client().get_object(
+                    Bucket=get_bucket_name(), Key=file_name
                 )
                 size = response.get("ContentLength")
                 if isinstance(size, int) and size > max_file_size:
@@ -255,7 +228,9 @@ def download_page_from_pdf(
                     )
                 body = response.get("Body")
                 if body is None:
-                    raise PDFReadError("R2 response did not contain a file body")
+                    raise PDFReadError(
+                        "Media bucket response did not contain a file body"
+                    )
                 try:
                     file_data = body.read(max_file_size + 1)
                 finally:

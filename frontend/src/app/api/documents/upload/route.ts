@@ -6,7 +6,7 @@ import {
   uploadPart,
   completeMultipartUpload,
   abortMultipartUpload,
-} from '@/utils/storage/r2Client';
+} from '@/utils/storage/mediaBucket';
 import {
   createSession,
   getSession,
@@ -53,7 +53,7 @@ async function queueDocument(
  * POST /api/documents/upload
  *
  * Receives chunked (or single-part) file uploads via multipart/form-data and
- * streams them to Cloudflare R2.
+ * streams them to the configured S3-compatible media bucket.
  *
  * Expected FormData fields:
  *   file        — Blob   (the chunk or whole file)
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /* ── Build the R2 object key with UUID ── */
+    /* ── Build the media object key with UUID ── */
     // Insert a UUID before the file extension to guarantee unique keys.
     // e.g. "report.pdf" → "report_a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf"
     const checksumPrefix = checksum.substring(0, 12);

@@ -15,7 +15,7 @@
 export interface MultipartSession {
   /** The S3/R2 multipart UploadId. */
   uploadId: string;
-  /** The object key in the R2 bucket. */
+  /** The object key in the configured media bucket. */
   key: string;
   /** Ordered list of uploaded part ETags (index = partNumber - 1). */
   eTags: string[];

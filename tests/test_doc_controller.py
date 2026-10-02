@@ -1,6 +1,6 @@
 """Integration tests for ``POST /documents``.
 
-The success cases use the configured Cloudflare R2, PostgreSQL, and Redis
+The success cases use the configured media bucket, PostgreSQL, and Redis
 services. Set ``EXISTING_MEDIA_SHA256`` to the real SHA-256 digest before
 running those live cases. The checksum rejection case is isolated with mocks.
 
@@ -19,7 +19,7 @@ import readforge.controllers.doc_controller as controller
 from readforge.server import app
 from readforge.utils.reading_util import FileTamperingError
 
-# Replace this with an object key that currently exists in the R2 media bucket.
+# Replace this with an object key that currently exists in the media bucket.
 EXISTING_MEDIA_FILE = "Fintech-Edge-April-2018.pdf"
 
 # Replace this with an object key that definitely does not exist in the bucket.
@@ -66,7 +66,7 @@ def _assert_validation_error(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-# what : Queues a real object from the configured R2 bucket in the configured Redis.
+# what : Queues a real object from the configured media bucket and Redis.
 # why   : The complete HTTP, storage, signing, and queueing flow must return a usable job ID.
 def test_upload_existing_document_returns_202(api_client: TestClient) -> None:
     _require_real_checksum()
@@ -138,7 +138,7 @@ def test_upload_accepts_twenty_byte_idempotency_key(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-# what : Requests an object key that does not exist in the real R2 bucket.
+# what : Requests an object key that does not exist in the media bucket.
 # why   : Missing documents must return 404 and must not be queued in Redis.
 def test_missing_document_returns_404(api_client: TestClient) -> None:
     response = api_client.post(
@@ -159,7 +159,7 @@ def test_missing_document_returns_404(api_client: TestClient) -> None:
     }
 
 
-# what : Rejects an R2 object whose stored checksum differs from the request.
+# what : Rejects a media object whose stored checksum differs from the request.
 # why   : A mismatched object must not be persisted or queued for processing.
 def test_checksum_metadata_mismatch_returns_409(
     api_client: TestClient,

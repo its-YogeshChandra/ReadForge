@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class UploadDocRequest(BaseModel):
-    """Request body for adding an existing R2 document to the job queue."""
+    """Request body for adding an existing media object to the job queue."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -85,7 +85,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
         verify_object_checksum_metadata(request.file_name, request.checksum)
         signed_url = create_presigned_url(request.file_name)
     except FileTamperingError:
-        logger.warning("Checksum mismatch for R2 object %s", request.file_name)
+        logger.warning("Checksum mismatch for media object %s", request.file_name)
         return _response(
             status.HTTP_409_CONFLICT,
             UploadResponse(
@@ -94,7 +94,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             ),
         )
     except (BotoCoreError, ClientError):
-        logger.exception("Could not access R2 object %s", request.file_name)
+        logger.exception("Could not access media object %s", request.file_name)
         return _response(
             status.HTTP_502_BAD_GATEWAY,
             UploadResponse(
@@ -123,7 +123,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             ),
         )
     except (RedisError, SQLAlchemyError, RuntimeError):
-        logger.exception("Could not queue R2 object %s", request.file_name)
+        logger.exception("Could not queue media object %s", request.file_name)
         return _response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             UploadResponse(

@@ -12,7 +12,7 @@ from readforge.utils.reading_util import (
     MAX_PDF_BYTES,
     OcrResponse,
     PdfPage,
-    download_files_from_s3,
+    download_file_from_media_bucket,
     download_page_from_pdf,
     get_file_size,
     ocr_util,
@@ -50,7 +50,9 @@ def _read_and_ocr(job: RedisJob, size_bytes: int) -> list[OcrResponse]:
         )
 
     with TemporaryDirectory(prefix="readforge-") as directory:
-        path = download_files_from_s3(job.file_name, directory, job.checksum)
+        path = download_file_from_media_bucket(
+            job.file_name, directory, job.checksum
+        )
         pages = download_page_from_pdf(job.file_name, file_path=path)
         return _ocr_pages(pages)
 

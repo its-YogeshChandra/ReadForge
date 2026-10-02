@@ -6,19 +6,28 @@ POSTGRES_PORT ?= 5433
 REDIS_PORT ?= 6379
 API_PORT ?= 8000
 CLIP_PORT ?= 8082
+MINIO_API_PORT ?= 9000
+MINIO_CONSOLE_PORT ?= 9001
 DATABASE_URL ?= postgresql+psycopg://readforge:readforge@localhost:$(POSTGRES_PORT)/readforge
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 CLIP_API_URL ?= http://localhost:$(CLIP_PORT)/
+MEDIA_BUCKET_PROVIDER ?= minio
+MINIO_ENDPOINT ?= http://localhost:$(MINIO_API_PORT)
+MINIO_ACCESS_KEY ?= minioadmin
+MINIO_SECRET_KEY ?= minioadmin
+MINIO_BUCKET_NAME ?= readforge-documents
 
 export POSTGRES_PORT DATABASE_URL REDIS_PORT REDIS_URL CLIP_PORT CLIP_API_URL
+export MEDIA_BUCKET_PROVIDER MINIO_API_PORT MINIO_CONSOLE_PORT MINIO_ENDPOINT
+export MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_BUCKET_NAME
 
 RUN_DIR := .run
 API_PID := $(RUN_DIR)/api.pid
 WORKER_PID := $(RUN_DIR)/worker.pid
 
-.PHONY: setup start up stop down restart status sync db redis clip migrate api worker logs
+.PHONY: setup start up stop down restart status sync db redis clip media minio migrate api worker logs
 
-setup: sync db redis clip migrate
+setup: sync db redis clip media migrate
 
 start: api worker
 
@@ -62,6 +71,22 @@ clip:
 		sleep 1; \
 	done; echo "CLIP did not become ready at $(CLIP_API_URL)"; exit 1
 
+media:
+	@if [ "$(MEDIA_BUCKET_PROVIDER)" = "minio" ]; then $(MAKE) --no-print-directory minio; fi
+
+minio:
+	@if curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1; then \
+		echo "MinIO already running"; \
+	elif docker compose ps --status running --services | grep -qx minio; then \
+		echo "Waiting for MinIO"; \
+	else \
+		docker compose up -d minio; \
+	fi
+	@for _ in {1..30}; do \
+		curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1 && exit 0; \
+		sleep 1; \
+	done; echo "MinIO did not become ready at $(MINIO_ENDPOINT)"; exit 1
+
 migrate: sync db
 	@uv run readforge-migrate
 
@@ -78,7 +103,7 @@ api: sync db redis
 		echo "API started (PID $$(cat $(API_PID)))"; \
 	fi
 
-worker: sync db redis clip
+worker: sync db redis clip media
 	@mkdir -p $(RUN_DIR)
 	@if [ -f "$(WORKER_PID)" ] && kill -0 "$$(cat $(WORKER_PID))" 2>/dev/null; then \
 		echo "Worker already running (PID $$(cat $(WORKER_PID)))"; \
@@ -96,6 +121,7 @@ status:
 	@if lsof -tiTCP:$(API_PORT) -sTCP:LISTEN >/dev/null 2>&1; then echo "API: running"; else echo "API: stopped"; fi
 	@if pgrep -f '[r]eadforge-worker' >/dev/null 2>&1; then echo "Worker: running"; else echo "Worker: stopped"; fi
 	@if curl -fsS "$(CLIP_API_URL)openapi.json" >/dev/null 2>&1; then echo "CLIP: running"; else echo "CLIP: stopped"; fi
+	@if curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1; then echo "MinIO: running"; else echo "MinIO: stopped"; fi
 
 logs:
 	@mkdir -p $(RUN_DIR)
@@ -106,7 +132,7 @@ stop:
 	@if [ -f "$(API_PID)" ] && kill -0 "$$(cat $(API_PID))" 2>/dev/null; then kill "$$(cat $(API_PID))"; fi
 	@if [ -f "$(WORKER_PID)" ] && kill -0 "$$(cat $(WORKER_PID))" 2>/dev/null; then kill "$$(cat $(WORKER_PID))"; fi
 	@rm -f $(API_PID) $(WORKER_PID)
-	@docker compose stop postgres redis clip >/dev/null
+	@docker compose stop postgres redis clip minio >/dev/null
 	@echo "ReadForge stopped"
 
 down: stop

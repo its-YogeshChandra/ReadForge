@@ -37,6 +37,24 @@ services:
       timeout: 3s
       retries: 60
 
+  minio:
+    image: bitnami/minio@sha256:f651556c9adf011d17e3e1646079f34906ecce43aaf73deeafa08d7a25872db4
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_BUCKET_NAME:-readforge-documents}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
 volumes:
   postgres_data:
   clip_models:
+  minio_data:

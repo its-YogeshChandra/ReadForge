@@ -113,8 +113,8 @@ def test_get_file_size_uses_object_metadata(monkeypatch) -> None:
             "request": kwargs,
         }
     )
-    monkeypatch.setattr(reading, "_r2_client", lambda: client)
-    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+    monkeypatch.setattr(reading, "get_client", lambda: client)
+    monkeypatch.setattr(reading, "get_bucket_name", lambda: "bucket")
 
     assert reading.get_file_size("file.pdf") == 123
 
@@ -126,8 +126,8 @@ def test_get_file_size_rejects_metadata_checksum_before_download(monkeypatch) ->
             "Metadata": {"sha256-checksum": "f" * 64},
         }
     )
-    monkeypatch.setattr(reading, "_r2_client", lambda: client)
-    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+    monkeypatch.setattr(reading, "get_client", lambda: client)
+    monkeypatch.setattr(reading, "get_bucket_name", lambda: "bucket")
 
     with pytest.raises(reading.FileTamperingError, match="File tampering detected"):
         reading.get_file_size("file.pdf", expected_checksum="0" * 64)
@@ -138,10 +138,10 @@ def test_verified_download_only_keeps_matching_file(monkeypatch, tmp_path) -> No
     client = SimpleNamespace(
         get_object=lambda **_kwargs: {"Body": BytesIO(file_data)}
     )
-    monkeypatch.setattr(reading, "_r2_client", lambda: client)
-    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+    monkeypatch.setattr(reading, "get_client", lambda: client)
+    monkeypatch.setattr(reading, "get_bucket_name", lambda: "bucket")
 
-    path = reading.download_files_from_s3(
+    path = reading.download_file_from_media_bucket(
         "file.pdf",
         str(tmp_path),
         hashlib.sha256(file_data).hexdigest(),
@@ -155,10 +155,12 @@ def test_tampered_download_removes_partial_file(monkeypatch, tmp_path) -> None:
     client = SimpleNamespace(
         get_object=lambda **_kwargs: {"Body": BytesIO(b"tampered content")}
     )
-    monkeypatch.setattr(reading, "_r2_client", lambda: client)
-    monkeypatch.setattr(reading, "_bucket_name", lambda: "bucket")
+    monkeypatch.setattr(reading, "get_client", lambda: client)
+    monkeypatch.setattr(reading, "get_bucket_name", lambda: "bucket")
 
     with pytest.raises(reading.FileTamperingError, match="File tampering detected"):
-        reading.download_files_from_s3("file.pdf", str(tmp_path), "0" * 64)
+        reading.download_file_from_media_bucket(
+            "file.pdf", str(tmp_path), "0" * 64
+        )
 
     assert list(tmp_path.iterdir()) == []
