@@ -19,3 +19,6 @@ graphify-out
 
 # Local process IDs and logs
 .run/
+
+#agents
+agents.md

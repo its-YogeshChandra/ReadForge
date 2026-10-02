@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* ─── ReadForge Bento Box Design System Tokens ─── */
+@theme inline {
+  /* Color Palette */
+  --color-bg-warm: #F5F4F1;
+  --color-card-white: #FFFFFF;
+  --color-accent-gold: #FFC837;
+  --color-accent-gold-hover: #E6B430;
+  --color-charcoal: #222222;
+  --color-muted-grey: #8E8E8E;
+  --color-muted-light: #D1D1D1;
+  --color-success: #34C759;
+  --color-error: #FF3B30;
+
+  /* Typography */
+  --font-sans: "Inter", "SF Pro Display", "Roboto", ui-sans-serif, system-ui, sans-serif;
+
+  /* Radii */
+  --radius-card: 16px;
+  --radius-inner: 10px;
+  --radius-pill: 9999px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
+}
+
+:root {
+  --background: #F5F4F1;
+  --foreground: #222222;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth transitions for interactive elements */
+* {
+  transition-property: background-color, border-color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
