@@ -166,9 +166,20 @@ function StatusBadge({ status }: { status: UploadStatus }) {
   );
 }
 
+/* ────────────────────── props ────────────────────── */
+
+interface UploadFormProps {
+  /** Callback fired when a file upload completes successfully. */
+  onUploadComplete?: (info: {
+    documentId: string;
+    fileName: string;
+    checksum: string;
+  }) => void;
+}
+
 /* ────────────────────── main component ────────────────────── */
 
-export default function UploadForm() {
+export default function UploadForm({ onUploadComplete }: UploadFormProps) {
   /* ── state ── */
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     status: 'idle',
@@ -398,8 +409,15 @@ export default function UploadForm() {
         ...prev,
         { name: file.name, size: file.size, checksum, status: 'success' },
       ]);
+
+      // Notify parent so the chat window can be activated
+      onUploadComplete?.({
+        documentId: checksum.substring(0, 12),
+        fileName: file.name,
+        checksum,
+      });
     },
-    [],
+    [onUploadComplete],
   );
 
   /* ── derived state ── */
