@@ -5,7 +5,8 @@ let minioClient: S3Client | null = null;
 export function getMinioClient(): S3Client {
   if (!minioClient) {
     minioClient = new S3Client({
-      region: process.env.MINIO_REGION ?? 'us-east-1',
+      // Required by AWS request signing; local MinIO has no region setting.
+      region: 'us-east-1',
       endpoint: process.env.MINIO_ENDPOINT,
       forcePathStyle: true,
       credentials: {

@@ -46,6 +46,7 @@ def test_minio_uses_s3_endpoint_and_path_style(
     client = minio_storage.get_client()
 
     assert client.meta.endpoint_url == "http://127.0.0.1:9000"
+    assert client.meta.region_name == "us-east-1"
     assert client.meta.config.s3["addressing_style"] == "path"
     assert minio_storage.get_bucket_name() == "documents"
     minio_storage.get_client.cache_clear()

@@ -21,7 +21,8 @@ def get_client():
         endpoint_url=_required("MINIO_ENDPOINT"),
         aws_access_key_id=_required("MINIO_ACCESS_KEY"),
         aws_secret_access_key=_required("MINIO_SECRET_KEY"),
-        region_name=os.getenv("MINIO_REGION", "us-east-1"),
+        # Required by AWS request signing; local MinIO has no region setting.
+        region_name="us-east-1",
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
 
