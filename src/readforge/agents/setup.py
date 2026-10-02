@@ -42,22 +42,20 @@ class LLMProvider:
     def invoke_llm(system_prompt: str, request: TaskContent) -> NotesClassification:
         response = requests.post(
             os.getenv(
-                "NVIDIA_NIM_API_URL",
-                "https://integrate.api.nvidia.com/v1/chat/completions",
+                "OPENROUTER_API_URL",
+                "https://openrouter.ai/api/v1/chat/completions",
             ),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.environ['NVIDIA_API_KEY']}",
+                "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             },
             json={
-                "model": os.environ["NVIDIA_NIM_MODEL"],
+                "model": os.getenv("OPENROUTER_MODEL", "openai/gpt-6-luna"),
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(request)},
                 ],
-                "temperature": 0.2,
-                "max_tokens": 40,
-                "chat_template_kwargs": {"enable_thinking": False},
+                "max_completion_tokens": 500,
                 "stream": False,
             },
             timeout=100,
@@ -67,10 +65,10 @@ class LLMProvider:
         try:
             intent = response.json()["choices"][0]["message"]["content"].strip().lower()
         except (KeyError, IndexError, TypeError, AttributeError) as error:
-            raise ValueError("NVIDIA NIM returned an invalid response") from error
+            raise ValueError("OpenRouter returned an invalid response") from error
 
         if intent not in {"task", "bug", "backlog"}:
-            raise ValueError(f"NVIDIA NIM returned an invalid note intent: {intent!r}")
+            raise ValueError(f"OpenRouter returned an invalid note intent: {intent!r}")
         return {"intent": intent}
 
 
