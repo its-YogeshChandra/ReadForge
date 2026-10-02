@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   putObject,
@@ -79,10 +80,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /* ── Build the R2 object key ── */
-    // Structure: documents/<checksum-prefix>/<fileName>
+    /* ── Build the R2 object key with UUID ── */
+    // Insert a UUID before the file extension to guarantee unique keys.
+    // e.g. "report.pdf" → "report_a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf"
     const checksumPrefix = checksum.substring(0, 12);
-    const objectKey = `documents/${checksumPrefix}/${fileName}`;
+    const uuid = crypto.randomUUID();
+    const dotIndex = fileName.lastIndexOf('.');
+    const uniqueFileName =
+      dotIndex !== -1
+        ? `${fileName.substring(0, dotIndex)}_${uuid}${fileName.substring(dotIndex)}`
+        : `${fileName}_${uuid}`;
+    const objectKey = `documents/${checksumPrefix}/${uniqueFileName}`;
 
     /* ── Read the chunk into a Buffer ── */
     const arrayBuffer = await file.arrayBuffer();
