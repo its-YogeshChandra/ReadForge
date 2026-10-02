@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 import readforge.controllers.doc_controller as controller
 from readforge.server import app
+from readforge.utils.media_bucket import MediaBucketUnavailableError
 from readforge.utils.reading_util import FileTamperingError
 
 # Replace this with an object key that currently exists in the media bucket.
@@ -171,6 +172,7 @@ def test_checksum_metadata_mismatch_returns_409(
     def reject_checksum(_file_name: str, _checksum: str) -> None:
         raise FileTamperingError("checksum mismatch")
 
+    monkeypatch.setattr(controller, "ensure_media_bucket_available", lambda: None)
     monkeypatch.setattr(controller, "is_file_exist", object_exists)
     monkeypatch.setattr(
         controller,
@@ -191,6 +193,33 @@ def test_checksum_metadata_mismatch_returns_409(
     assert response.json() == {
         "success": False,
         "message": "File integrity verification failed",
+        "job_id": None,
+        "document_id": None,
+    }
+
+
+def test_unavailable_media_bucket_returns_503(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable() -> None:
+        raise MediaBucketUnavailableError("unavailable")
+
+    monkeypatch.setattr(controller, "ensure_media_bucket_available", unavailable)
+
+    response = api_client.post(
+        "/documents",
+        json={
+            "file_name": "documents/file.pdf",
+            "idem_key": _new_idempotency_key(),
+            "checksum": "0" * 64,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "success": False,
+        "message": "Document storage is temporarily unavailable",
         "job_id": None,
         "document_id": None,
     }

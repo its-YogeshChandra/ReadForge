@@ -6,6 +6,8 @@ import {
   uploadPart,
   completeMultipartUpload,
   abortMultipartUpload,
+  ensureMediaBucketAvailable,
+  MediaBucketError,
 } from '@/utils/storage/mediaBucket';
 import {
   createSession,
@@ -21,30 +23,55 @@ interface QueueResponse {
   document_id: string | null;
 }
 
+class UploadRouteError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message);
+    this.name = 'UploadRouteError';
+  }
+}
+
 async function queueDocument(
   objectKey: string,
   checksum: string,
 ): Promise<QueueResponse> {
-  const response = await fetch(
-    new URL('/documents', process.env.READFORGE_API_URL),
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file_name: objectKey,
-        idem_key: crypto
-          .createHash('sha256')
-          .update(objectKey)
-          .digest('hex')
-          .slice(0, 20),
-        checksum,
-      }),
-      cache: 'no-store',
-    },
-  );
-  const result = (await response.json()) as QueueResponse;
-  if (!response.ok || !result.document_id || !result.job_id) {
-    throw new Error(result.message || 'Could not queue the uploaded document.');
+  let response: Response;
+  try {
+    response = await fetch(
+      new URL('/documents', process.env.READFORGE_API_URL),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_name: objectKey,
+          idem_key: crypto
+            .createHash('sha256')
+            .update(objectKey)
+            .digest('hex')
+            .slice(0, 20),
+          checksum,
+        }),
+        cache: 'no-store',
+      },
+    );
+  } catch {
+    throw new UploadRouteError(
+      'Document processing service is temporarily unavailable.',
+      503,
+    );
+  }
+
+  const result = (await response.json().catch(() => null)) as QueueResponse | null;
+  if (!response.ok) {
+    throw new UploadRouteError(
+      result?.message || 'Could not queue the uploaded document.',
+      response.status,
+    );
+  }
+  if (!result?.document_id || !result.job_id) {
+    throw new UploadRouteError('Document processing service returned an invalid response.', 502);
   }
   return result;
 }
@@ -130,6 +157,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await ensureMediaBucketAvailable();
+
     /* ── Build the media object key with UUID ── */
     // Insert a UUID before the file extension to guarantee unique keys.
     // e.g. "report.pdf" → "report_a1b2c3d4-e5f6-7890-abcd-ef1234567890.pdf"
@@ -171,14 +200,20 @@ export async function POST(request: NextRequest) {
 
     /* ── First chunk: initiate multipart upload ── */
     if (chunkIndex === 0) {
-      const uploadId = await createMultipartUpload(objectKey, fileType, checksum);
-      createSession(objectKey, uploadId, checksum, fileName, totalChunks);
+      let uploadId: string | undefined;
+      try {
+        uploadId = await createMultipartUpload(objectKey, fileType, checksum);
+        createSession(objectKey, uploadId, checksum, fileName, totalChunks);
 
-      const eTag = await uploadPart(objectKey, uploadId, partNumber, buffer);
-
-      const session = getSession(checksum, fileName);
-      if (session) {
-        session.eTags[chunkIndex] = eTag;
+        const eTag = await uploadPart(objectKey, uploadId, partNumber, buffer);
+        const session = getSession(checksum, fileName);
+        if (session) session.eTags[chunkIndex] = eTag;
+      } catch (error) {
+        if (uploadId) {
+          await abortMultipartUpload(objectKey, uploadId).catch(() => {});
+        }
+        deleteSession(checksum, fileName);
+        throw error;
       }
 
       return NextResponse.json({
@@ -218,11 +253,7 @@ export async function POST(request: NextRequest) {
       });
       deleteSession(checksum, fileName);
 
-      const message = partError instanceof Error ? partError.message : 'Part upload failed.';
-      return NextResponse.json(
-        { success: false, message: `Chunk upload failed: ${message}` },
-        { status: 500 },
-      );
+      throw partError;
     }
 
     /* ── Final chunk: complete the multipart upload ── */
@@ -254,11 +285,7 @@ export async function POST(request: NextRequest) {
         await abortMultipartUpload(session.key, session.uploadId).catch(() => {});
         deleteSession(checksum, fileName);
 
-        const message = completeError instanceof Error ? completeError.message : 'Failed to finalize upload.';
-        return NextResponse.json(
-          { success: false, message },
-          { status: 500 },
-        );
+        throw completeError;
       }
 
       // Clean up the session
@@ -281,10 +308,13 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[upload] Unhandled error:', error);
-    const message = error instanceof Error ? error.message : 'Internal server error.';
+    const expectedError =
+      error instanceof MediaBucketError || error instanceof UploadRouteError;
+    const status = expectedError ? error.statusCode : 500;
+    const message = expectedError ? error.message : 'Internal server error.';
     return NextResponse.json(
       { success: false, message },
-      { status: 500 },
+      { status },
     );
   }
 }

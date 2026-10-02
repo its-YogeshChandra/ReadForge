@@ -66,11 +66,11 @@ async def health_check() -> dict[str, bool]:
         },
         status.HTTP_502_BAD_GATEWAY: {
             "model": UploadResponse,
-            "description": "The media bucket could not be reached.",
+            "description": "The media bucket rejected the request.",
         },
         status.HTTP_503_SERVICE_UNAVAILABLE: {
             "model": UploadResponse,
-            "description": "Redis could not accept the job.",
+            "description": "Storage or the job infrastructure is unavailable.",
         },
     },
 )

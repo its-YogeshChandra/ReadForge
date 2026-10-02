@@ -11,7 +11,7 @@ MINIO_CONSOLE_PORT ?= 9001
 DATABASE_URL ?= postgresql+psycopg://readforge:readforge@localhost:$(POSTGRES_PORT)/readforge
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 CLIP_API_URL ?= http://localhost:$(CLIP_PORT)/
-MEDIA_BUCKET_PROVIDER ?= minio
+MEDIA_BUCKET_PROVIDER ?= cloudflare
 MINIO_ENDPOINT ?= http://localhost:$(MINIO_API_PORT)
 MINIO_ACCESS_KEY ?= minioadmin
 MINIO_SECRET_KEY ?= minioadmin
@@ -72,7 +72,11 @@ clip:
 	done; echo "CLIP did not become ready at $(CLIP_API_URL)"; exit 1
 
 media:
-	@if [ "$(MEDIA_BUCKET_PROVIDER)" = "minio" ]; then $(MAKE) --no-print-directory minio; fi
+	@if [ "$(MEDIA_BUCKET_PROVIDER)" = "minio" ]; then \
+		$(MAKE) --no-print-directory minio; \
+	else \
+		echo "Media bucket: Cloudflare R2 (checked by the application)"; \
+	fi
 
 minio:
 	@if curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1; then \
@@ -121,7 +125,11 @@ status:
 	@if lsof -tiTCP:$(API_PORT) -sTCP:LISTEN >/dev/null 2>&1; then echo "API: running"; else echo "API: stopped"; fi
 	@if pgrep -f '[r]eadforge-worker' >/dev/null 2>&1; then echo "Worker: running"; else echo "Worker: stopped"; fi
 	@if curl -fsS "$(CLIP_API_URL)openapi.json" >/dev/null 2>&1; then echo "CLIP: running"; else echo "CLIP: stopped"; fi
-	@if curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1; then echo "MinIO: running"; else echo "MinIO: stopped"; fi
+	@if [ "$(MEDIA_BUCKET_PROVIDER)" = "minio" ]; then \
+		if curl -fsS "$(MINIO_ENDPOINT)/minio/health/live" >/dev/null 2>&1; then echo "MinIO: running"; else echo "MinIO: stopped"; fi; \
+	else \
+		echo "Media bucket: Cloudflare R2 (checked by the application)"; \
+	fi
 
 logs:
 	@mkdir -p $(RUN_DIR)

@@ -10,6 +10,11 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
 from readforge.utils.db_utils import ChecksumConflictError, ensure_document
+from readforge.utils.media_bucket import (
+    MediaBucketUnavailableError,
+    ensure_available as ensure_media_bucket_available,
+    is_unavailable_error,
+)
 from readforge.utils.reading_util import (
     FileTamperingError,
     create_presigned_url,
@@ -25,8 +30,8 @@ logger = logging.getLogger(__name__)
 # 404 Not Found: The requested document does not exist in R2.
 # 409 Conflict: Stored or supplied checksums do not agree.
 # 422 Unprocessable Entity: FastAPI rejected an invalid request body.
-# 502 Bad Gateway: R2 could not be reached or returned an unexpected error.
-# 503 Service Unavailable: PostgreSQL or Redis could not accept the job.
+# 502 Bad Gateway: Storage returned an unexpected request error.
+# 503 Service Unavailable: Storage, PostgreSQL, or Redis is unavailable.
 
 
 class UploadDocRequest(BaseModel):
@@ -72,6 +77,7 @@ def _response(status_code: int, payload: UploadResponse) -> JSONResponse:
 async def upload_doc(request: UploadDocRequest) -> JSONResponse:
     """Validate an R2 document and enqueue it for asynchronous processing."""
     try:
+        ensure_media_bucket_available()
         file_exists = await is_file_exist(request.file_name)
         if not file_exists:
             return _response(
@@ -93,13 +99,31 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
                 message="File integrity verification failed",
             ),
         )
-    except (BotoCoreError, ClientError):
-        logger.exception("Could not access media object %s", request.file_name)
+    except MediaBucketUnavailableError:
+        logger.exception("Document storage is unavailable")
         return _response(
-            status.HTTP_502_BAD_GATEWAY,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
             UploadResponse(
                 success=False,
-                message="Could not access document storage",
+                message="Document storage is temporarily unavailable",
+            ),
+        )
+    except (BotoCoreError, ClientError) as error:
+        logger.exception("Could not access media object %s", request.file_name)
+        response_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if is_unavailable_error(error)
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        return _response(
+            response_status,
+            UploadResponse(
+                success=False,
+                message=(
+                    "Document storage is temporarily unavailable"
+                    if response_status == status.HTTP_503_SERVICE_UNAVAILABLE
+                    else "Document storage rejected the request"
+                ),
             ),
         )
 

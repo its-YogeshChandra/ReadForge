@@ -1,5 +1,6 @@
 """Provider selection checks for the media bucket facade."""
 
+from botocore.exceptions import ClientError
 import pytest
 
 from readforge.utils import media_bucket, minio_storage
@@ -50,3 +51,62 @@ def test_minio_uses_s3_endpoint_and_path_style(
     assert client.meta.config.s3["addressing_style"] == "path"
     assert minio_storage.get_bucket_name() == "documents"
     minio_storage.get_client.cache_clear()
+
+
+def test_media_bucket_health_check_uses_selected_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Client:
+        def head_bucket(self, *, Bucket: str) -> None:
+            calls.append(Bucket)
+
+    monkeypatch.setattr(media_bucket, "get_client", Client)
+    monkeypatch.setattr(media_bucket, "get_bucket_name", lambda: "documents")
+
+    media_bucket.ensure_available()
+
+    assert calls == ["documents"]
+
+
+def test_media_bucket_health_failure_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = ClientError(
+        {
+            "Error": {"Code": "AccessDenied", "Message": "denied"},
+            "ResponseMetadata": {"HTTPStatusCode": 403},
+        },
+        "HeadBucket",
+    )
+
+    class Client:
+        def head_bucket(self, **_kwargs) -> None:
+            raise error
+
+    monkeypatch.setattr(media_bucket, "get_client", Client)
+    monkeypatch.setattr(media_bucket, "get_bucket_name", lambda: "documents")
+
+    with pytest.raises(media_bucket.MediaBucketUnavailableError):
+        media_bucket.ensure_available()
+
+
+def test_storage_errors_distinguish_unavailable_from_rejected() -> None:
+    unavailable = ClientError(
+        {
+            "Error": {"Code": "ServiceUnavailable", "Message": "retry"},
+            "ResponseMetadata": {"HTTPStatusCode": 503},
+        },
+        "PutObject",
+    )
+    rejected = ClientError(
+        {
+            "Error": {"Code": "InvalidDigest", "Message": "invalid"},
+            "ResponseMetadata": {"HTTPStatusCode": 400},
+        },
+        "PutObject",
+    )
+
+    assert media_bucket.is_unavailable_error(unavailable) is True
+    assert media_bucket.is_unavailable_error(rejected) is False
