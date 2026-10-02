@@ -1,125 +1,44 @@
-# langgraph used to create statful agents
-# note taking ai agent
+"""Terminal entry point for the EOC multi-agent workflow."""
+
 import json
-import os
-from typing import Literal, NotRequired, TypedDict
 
-import requests
-from dotenv import load_dotenv
-from langgraph.graph import END, START, StateGraph
-
-load_dotenv()
-
-
-# task content
-class TaskContent(TypedDict):
-    date: str
-    main_task: str
-
-
-class NotesClassification(TypedDict):
-    intent: Literal["task", "bug", "backlog"]
-
-
-class DraftedResponse(TypedDict):
-    classification: Literal["task", "bug", "backlog"]
-    start_date: str
-    task: str
-
-
-# shared states used by nodes
-class NotesAgentsState(TypedDict):
-    task_content: TaskContent
-    classification: NotRequired[NotesClassification]
-    drafted_response: NotRequired[DraftedResponse]
-
-
-class LLMProvider:
-    # goal : infer the user request,
-    # return : { "intent" : "task" | "bug" | "backlog" }
-    # format should be exactly like this
-    @staticmethod
-    def invoke_llm(system_prompt: str, request: TaskContent) -> NotesClassification:
-        response = requests.post(
-            os.getenv(
-                "OPENROUTER_API_URL",
-                "https://openrouter.ai/api/v1/chat/completions",
-            ),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
-            },
-            json={
-                "model": os.getenv("OPENROUTER_MODEL", "openai/gpt-6-luna"),
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(request)},
-                ],
-                "max_completion_tokens": 500,
-                "stream": False,
-            },
-            timeout=100,
-        )
-        response.raise_for_status()
-
-        try:
-            intent = response.json()["choices"][0]["message"]["content"].strip().lower()
-        except (KeyError, IndexError, TypeError, AttributeError) as error:
-            raise ValueError("OpenRouter returned an invalid response") from error
-
-        if intent not in {"task", "bug", "backlog"}:
-            raise ValueError(f"OpenRouter returned an invalid note intent: {intent!r}")
-        return {"intent": intent}
-
-
-# classifcation function
-def infer_intent(state: NotesAgentsState):
-    """Use LLM to classify task intent , then route accordingly"""
-    system_prompt = """
-    You classify user requests as task, bug, or backlog.
-    Return exactly one word: task, bug, or backlog. Do not add punctuation or explanation.
-    """
-    return {
-        "classification": LLMProvider.invoke_llm(system_prompt, state["task_content"])
-    }
-
-
-def create_task(state: NotesAgentsState) -> dict[str, DraftedResponse]:
-    task_content = state["task_content"]
-    response: DraftedResponse = {
-        "classification": state["classification"]["intent"],
-        "start_date": task_content["date"],
-        "task": task_content["main_task"],
-    }
-    with open("notes.txt", "a", encoding="utf-8") as file:
-        file.write(json.dumps(response) + "\n")
-    return {"drafted_response": response}
-
-
-workflow_builder = StateGraph(NotesAgentsState)
-
-# adding nodes
-workflow_builder.add_node("infer_intent", infer_intent)
-workflow_builder.add_node("create_task", create_task)
-
-#adding edges 
-workflow_builder.add_edge(START, "infer_intent")
-workflow_builder.add_edge("infer_intent", "create_task")
-workflow_builder.add_edge("create_task", END)
-
-workflow = workflow_builder.compile()
+from readforge.agents.state import CaseInput, Evidence
+from readforge.agents.workflow import workflow
 
 
 def main() -> None:
-    task_content: TaskContent = {
-        "date": input("Date: ").strip(),
-        "main_task": input("Task: ").strip(),
-    }
-    if not task_content["date"] or not task_content["main_task"]:
-        raise ValueError("Date and task are required")
+    question = input("Question: ").strip()
+    plan_name = input("Plan name: ").strip() or None
+    coverage_year_value = input("Coverage year: ").strip()
+    service_date = input("Service date (YYYY-MM-DD, optional): ").strip() or None
+    evidence_text = input("Relevant EOC text (optional): ").strip()
 
-    result = workflow.invoke({"task_content": task_content})
-    print(json.dumps(result["drafted_response"], indent=2))
+    evidence = []
+    if evidence_text:
+        page_number_value = input("EOC page number: ").strip()
+        evidence = [
+            Evidence(
+                evidence_id="E1",
+                page_number=int(page_number_value),
+                content=evidence_text,
+                document_type="eoc",
+                plan_name=plan_name,
+                coverage_year=(
+                    int(coverage_year_value) if coverage_year_value else None
+                ),
+                official=True,
+            )
+        ]
+
+    case = CaseInput(
+        question=question,
+        plan_name=plan_name,
+        coverage_year=int(coverage_year_value) if coverage_year_value else None,
+        service_date=service_date,
+        evidence=evidence,
+    )
+    result = workflow.invoke({"case": case}, config={"max_concurrency": 2})
+    print(json.dumps(result["final_response"], indent=2))
 
 
 if __name__ == "__main__":
