@@ -36,6 +36,14 @@ EMBEDDING_BATCH_SIZE = 32
 logger = logging.getLogger(__name__)
 
 
+async def _publish_status(status: RedisJobStatus) -> None:
+    """Keep notification failures from corrupting durable processing state."""
+    try:
+        await publish_job_status(status)
+    except Exception:
+        logger.exception("Could not publish status for job %s", status.job_id)
+
+
 def _ocr_pages(pages: list[PdfPage]) -> list[OcrResponse]:
     results: list[OcrResponse] = []
     for start in range(0, len(pages), PAGE_BATCH_SIZE):
@@ -102,7 +110,7 @@ async def process_job(job: RedisJob) -> None:
 
     job_id, document_id = identifiers
     started_at = datetime.now(UTC)
-    await publish_job_status(
+    await _publish_status(
         RedisJobStatus(
             job_id=job.job_id,
             document_id=str(document_id),
@@ -124,7 +132,7 @@ async def process_job(job: RedisJob) -> None:
     trace(job_id, "document.embeddings_created", chunk_count=len(embeddings))
     await save_embeddings(job_id, document_id, embeddings)
     completed_at = datetime.now(UTC)
-    await publish_job_status(
+    await _publish_status(
         RedisJobStatus(
             job_id=job.job_id,
             document_id=str(document_id),
@@ -156,20 +164,15 @@ async def run_worker() -> None:
                         await fail_job(job.job_id, reason)
                     except Exception:
                         logger.exception("Could not mark job %s as failed", job.job_id)
-                    try:
-                        await publish_job_status(
-                            RedisJobStatus(
-                                job_id=job.job_id,
-                                status="failed",
-                                created_at=job.created_at,
-                                completed_at=datetime.now(UTC),
-                                error_message=reason,
-                            )
+                    await _publish_status(
+                        RedisJobStatus(
+                            job_id=job.job_id,
+                            status="failed",
+                            created_at=job.created_at,
+                            completed_at=datetime.now(UTC),
+                            error_message=reason,
                         )
-                    except Exception:
-                        logger.exception(
-                            "Could not publish failure for job %s", job.job_id
-                        )
+                    )
                     trace(job.job_id, "document.failed", error_type=type(error).__name__)
                     await send_to_dead_letter_queue(job, reason)
     finally:
