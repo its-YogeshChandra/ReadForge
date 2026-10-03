@@ -8,7 +8,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
-from opentelemetry.propagate import inject
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 load_dotenv()
 
@@ -122,7 +122,7 @@ async def create_job(request: RedisJobRequest) -> RedisJob:
     job without adding a duplicate queue entry.
     """
     trace_context: dict[str, str] = {}
-    inject(trace_context)
+    TraceContextTextMapPropagator().inject(trace_context)
     job = RedisJob(
         **request.model_dump(),
         job_id=str(uuid4()),

@@ -97,7 +97,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             ),
         )
     except (BotoCoreError, ClientError) as error:
-        logger.exception("Could not access media object %s", request.file_name)
+        logger.exception("Could not access media object")
         response_status = (
             status.HTTP_503_SERVICE_UNAVAILABLE
             if is_unavailable_error(error)
@@ -135,7 +135,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             ),
         )
     except (RedisError, SQLAlchemyError, RuntimeError):
-        logger.exception("Could not queue media object %s", request.file_name)
+        logger.exception("Could not queue media object")
         return _response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             UploadResponse(

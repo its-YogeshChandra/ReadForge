@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: ReadForge
+    orgId: 1
+    folder: ReadForge
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /otel-lgtm/readforge-dashboard.json

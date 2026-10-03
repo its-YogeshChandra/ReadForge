@@ -7,8 +7,8 @@ from tempfile import TemporaryDirectory
 from time import monotonic
 
 from opentelemetry import metrics, trace as otel_trace
-from opentelemetry.propagate import extract
 from opentelemetry.trace import SpanKind, Status, StatusCode
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from readforge.database import close_database, engine
 from readforge.observability import configure_observability, shutdown_observability
@@ -166,7 +166,7 @@ async def process_job(job: RedisJob) -> None:
     """Process one queued job inside its originating distributed trace."""
     started = monotonic()
     outcome = "completed"
-    parent_context = extract(job.trace_context)
+    parent_context = TraceContextTextMapPropagator().extract(job.trace_context)
     with tracer.start_as_current_span(
         "document.process",
         context=parent_context,

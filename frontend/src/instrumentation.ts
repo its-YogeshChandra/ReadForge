@@ -5,7 +5,12 @@ export function register() {
     serviceName: "readforge-web",
     instrumentationConfig: {
       fetch: {
-        propagateContextUrls: [/localhost:8000/, /\/api\//],
+        propagateContextUrls: [
+          /\/api\//,
+          /\/documents$/,
+          /\/chat$/,
+          /\/jobs\/[^/]+/,
+        ],
       },
     },
   });
