@@ -8,6 +8,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
+from opentelemetry.propagate import inject
 
 load_dotenv()
 
@@ -48,6 +49,7 @@ class RedisJob(RedisJobRequest):
 
     job_id: str
     created_at: datetime
+    trace_context: dict[str, str] = Field(default_factory=dict)
 
 
 class RedisJobStatus(BaseModel):
@@ -119,10 +121,13 @@ async def create_job(request: RedisJobRequest) -> RedisJob:
     Reusing an idempotency key within the two-hour window returns the original
     job without adding a duplicate queue entry.
     """
+    trace_context: dict[str, str] = {}
+    inject(trace_context)
     job = RedisJob(
         **request.model_dump(),
         job_id=str(uuid4()),
         created_at=datetime.now(UTC),
+        trace_context=trace_context,
     )
     payload = job.model_dump_json()
     status_payload = RedisJobStatus(

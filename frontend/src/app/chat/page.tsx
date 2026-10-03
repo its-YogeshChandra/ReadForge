@@ -13,7 +13,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
 
   return (
     <main className="min-h-screen bg-[--color-bg-warm] px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto mb-8 flex max-w-3xl items-end justify-between gap-4">
+      <div className="mx-auto mb-8 flex max-w-5xl items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-light text-[--color-charcoal]">
             Document Assistant
@@ -36,7 +36,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
           documentName={documentName || 'document'}
         />
       ) : (
-        <div className="mx-auto max-w-3xl rounded-[--radius-card] bg-[--color-card-white] p-8 text-center shadow-[--shadow-card]">
+        <div className="mx-auto max-w-5xl rounded-[--radius-card] bg-[--color-card-white] p-8 text-center shadow-[--shadow-card]">
           <p className="text-sm text-[--color-muted-grey]">
             Upload and process a document before starting a conversation.
           </p>

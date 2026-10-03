@@ -4,8 +4,14 @@ import asyncio
 from datetime import UTC, datetime
 import logging
 from tempfile import TemporaryDirectory
+from time import monotonic
 
-from readforge.database import close_database
+from opentelemetry import metrics, trace as otel_trace
+from opentelemetry.propagate import extract
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+from readforge.database import close_database, engine
+from readforge.observability import configure_observability, shutdown_observability
 from readforge.utils.db_utils import fail_job, save_embeddings, save_ocr, start_job
 from readforge.utils.embedding_utils import embed_texts, embedding_model
 from readforge.utils.reading_util import (
@@ -34,6 +40,17 @@ POLL_INTERVAL_SECONDS = 1
 EMBEDDING_BATCH_SIZE = 32
 
 logger = logging.getLogger(__name__)
+tracer = otel_trace.get_tracer("readforge.worker")
+meter = metrics.get_meter("readforge.worker")
+jobs_processed = meter.create_counter(
+    "readforge.jobs.processed",
+    description="Document jobs processed by outcome.",
+)
+job_duration = meter.create_histogram(
+    "readforge.job.duration",
+    unit="s",
+    description="End-to-end document job processing time.",
+)
 
 
 async def _publish_status(status: RedisJobStatus) -> None:
@@ -94,9 +111,9 @@ def _embed_pages(
     return chunks
 
 
-async def process_job(job: RedisJob) -> None:
+async def _process_job(job: RedisJob) -> None:
     """Process one Redis job and persist its OCR and embeddings."""
-    trace(job.job_id, "worker.claimed", object_key=job.file_name)
+    trace(job.job_id, "worker.claimed")
     identifiers = await start_job(
         job.job_id,
         job.file_name,
@@ -145,6 +162,30 @@ async def process_job(job: RedisJob) -> None:
     trace(job_id, "document.completed", document_id=document_id)
 
 
+async def process_job(job: RedisJob) -> None:
+    """Process one queued job inside its originating distributed trace."""
+    started = monotonic()
+    outcome = "completed"
+    parent_context = extract(job.trace_context)
+    with tracer.start_as_current_span(
+        "document.process",
+        context=parent_context,
+        kind=SpanKind.CONSUMER,
+        attributes={"readforge.job_id": job.job_id},
+    ) as span:
+        try:
+            await _process_job(job)
+        except Exception as error:
+            outcome = "failed"
+            span.record_exception(error)
+            span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+            raise
+        finally:
+            attributes = {"status": outcome}
+            jobs_processed.add(1, attributes)
+            job_duration.record(monotonic() - started, attributes)
+
+
 async def run_worker() -> None:
     """Poll Redis forever and process queued jobs sequentially."""
     try:
@@ -181,7 +222,11 @@ async def run_worker() -> None:
 
 
 def main() -> None:
-    asyncio.run(run_worker())
+    configure_observability("readforge-worker", sqlalchemy_engine=engine.sync_engine)
+    try:
+        asyncio.run(run_worker())
+    finally:
+        shutdown_observability()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,11 @@ from readforge.agents.workflow import workflow
 
 class MultiAgentWorkflowTest(unittest.TestCase):
     def test_routes_specialists_and_scores_each_finding(self) -> None:
-        def fake_response(system_prompt: str, request: dict) -> dict:
+        def fake_response(
+            system_prompt: str,
+            request: dict,
+            response_model: type,
+        ) -> dict:
             if "intent router" in system_prompt:
                 return {
                     "intents": ["coverage", "referral"],

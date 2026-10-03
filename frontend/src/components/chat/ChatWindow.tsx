@@ -130,7 +130,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div
         className={`max-w-[75%] px-4 py-2.5 text-sm leading-relaxed ${
           isUser
-            ? 'bg-[--color-charcoal] text-white rounded-2xl rounded-tr-md'
+            ? 'bg-[#222222] text-white rounded-2xl rounded-tr-md'
             : 'bg-[--color-bg-warm] text-[--color-charcoal] rounded-2xl rounded-tl-md'
         }`}
       >
@@ -272,12 +272,12 @@ export default function ChatWindow({
   return (
     <div
       className={`
-        w-full max-w-3xl mx-auto
+        w-full max-w-5xl mx-auto
         transition-all duration-700 ease-out
         ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}
       `}
     >
-      <div className="bg-[--color-card-white] rounded-[--radius-card] shadow-[--shadow-card] overflow-hidden flex flex-col">
+      <div className="h-[calc(100dvh-12rem)] min-h-[32rem] max-h-[52rem] bg-[--color-card-white] rounded-[--radius-card] shadow-[--shadow-card] overflow-hidden flex flex-col">
         {/* ── Chat Header ── */}
         <div className="flex items-center gap-3 px-6 py-4 border-b border-[--color-muted-light]/40">
           <div className="w-9 h-9 rounded-full bg-[--color-accent-gold]/15 flex items-center justify-center">
@@ -298,7 +298,7 @@ export default function ChatWindow({
         </div>
 
         {/* ── Messages Area ── */}
-        <div className="flex-1 overflow-y-auto py-4 space-y-1 max-h-[400px] min-h-[200px]">
+        <div className="flex-1 overflow-y-auto py-4 space-y-1">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
@@ -318,12 +318,12 @@ export default function ChatWindow({
               disabled={isLoading}
               maxLength={8000}
               className="
-                flex-1 px-4 py-2.5 text-sm text-[--color-charcoal]
-                bg-[--color-bg-warm] rounded-[--radius-pill]
+                flex-1 px-4 py-2.5 text-sm text-[#222222] caret-[#222222]
+                bg-[#F5F4F1] rounded-[--radius-pill]
                 border border-transparent
                 placeholder:text-[--color-muted-grey]
                 focus:outline-none focus:border-[--color-accent-gold] focus:ring-2 focus:ring-[--color-accent-gold]/20
-                disabled:opacity-60 disabled:cursor-not-allowed
+                disabled:opacity-60 disabled:cursor-not-allowed disabled:text-[#222222]
               "
             />
             <button

@@ -5,22 +5,29 @@ SHELL := /bin/bash
 POSTGRES_PORT ?= 5433
 REDIS_PORT ?= 6379
 API_PORT ?= 8000
+GRAFANA_PORT ?= 3001
+OTLP_GRPC_PORT ?= 4317
+OTLP_HTTP_PORT ?= 4318
+OTEL_EXPORTER_OTLP_ENDPOINT ?= http://localhost:$(OTLP_HTTP_PORT)
+OTEL_EXPORTER_OTLP_PROTOCOL ?= http/protobuf
 DATABASE_URL ?= postgresql+psycopg://readforge:readforge@localhost:$(POSTGRES_PORT)/readforge
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 MEDIA_BUCKET_PROVIDER ?= cloudflare
 
 export POSTGRES_PORT DATABASE_URL REDIS_PORT REDIS_URL
 export MEDIA_BUCKET_PROVIDER
+export GRAFANA_PORT OTLP_GRPC_PORT OTLP_HTTP_PORT
+export OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_PROTOCOL
 
 RUN_DIR := .run
 API_PID := $(RUN_DIR)/api.pid
 WORKER_PID := $(RUN_DIR)/worker.pid
 
-.PHONY: setup start up stop down restart status sync db redis migrate api worker logs
+.PHONY: setup start up stop down restart status sync db redis observability migrate api worker logs
 
-setup: sync db redis migrate
+setup: sync db redis observability migrate
 
-start: api worker
+start: observability api worker
 
 up: start
 
@@ -48,6 +55,17 @@ redis: sync
 		REDIS_URL="$(REDIS_URL)" uv run python -c 'import os, redis; redis.Redis.from_url(os.environ["REDIS_URL"]).ping()' >/dev/null 2>&1 && exit 0; \
 		sleep 1; \
 	done; echo "Redis did not become ready"; exit 1
+
+observability:
+	@if docker compose ps --status running --services | grep -qx observability; then \
+		echo "Observability stack already running"; \
+	else \
+		docker compose up -d observability; \
+	fi
+	@for _ in {1..60}; do \
+		curl -fsS http://localhost:$(GRAFANA_PORT)/api/health >/dev/null 2>&1 && exit 0; \
+		sleep 1; \
+	done; echo "Observability stack did not become ready"; exit 1
 
 migrate: sync db
 	@uv run readforge-migrate
@@ -82,6 +100,7 @@ status:
 	@docker compose ps
 	@if lsof -tiTCP:$(API_PORT) -sTCP:LISTEN >/dev/null 2>&1; then echo "API: running"; else echo "API: stopped"; fi
 	@if pgrep -f '[r]eadforge-worker' >/dev/null 2>&1; then echo "Worker: running"; else echo "Worker: stopped"; fi
+	@echo "Grafana: http://localhost:$(GRAFANA_PORT)"
 
 logs:
 	@mkdir -p $(RUN_DIR)
@@ -92,7 +111,7 @@ stop:
 	@if [ -f "$(API_PID)" ] && kill -0 "$$(cat $(API_PID))" 2>/dev/null; then kill "$$(cat $(API_PID))"; fi
 	@if [ -f "$(WORKER_PID)" ] && kill -0 "$$(cat $(WORKER_PID))" 2>/dev/null; then kill "$$(cat $(WORKER_PID))"; fi
 	@rm -f $(API_PID) $(WORKER_PID)
-	@docker compose stop postgres redis >/dev/null
+	@docker compose stop postgres redis observability >/dev/null
 	@echo "ReadForge stopped"
 
 down: stop

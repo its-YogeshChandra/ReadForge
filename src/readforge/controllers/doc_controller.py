@@ -21,6 +21,7 @@ from readforge.utils.redis_utils import RedisJobRequest, create_job
 from readforge.utils.tracing import trace
 
 logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger("readforge.audit.document")
 
 # HTTP status codes used by this controller:
 # 202 Accepted: The document was successfully added to the processing queue.
@@ -87,7 +88,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
         verify_object_checksum_metadata(request.file_name, request.checksum)
         signed_url = create_presigned_url(request.file_name)
     except FileTamperingError:
-        logger.warning("Checksum mismatch for media object %s", request.file_name)
+        audit_logger.warning("Media object checksum mismatch")
         return _response(
             status.HTTP_409_CONFLICT,
             UploadResponse(
@@ -125,7 +126,7 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             )
         )
     except ChecksumConflictError:
-        logger.warning("Stored checksum conflict for %s", request.file_name)
+        audit_logger.warning("Stored document checksum conflict")
         return _response(
             status.HTTP_409_CONFLICT,
             UploadResponse(
@@ -147,7 +148,6 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
         job.job_id,
         "document.queued",
         document_id=document_id,
-        object_key=request.file_name,
     )
     return _response(
         status.HTTP_202_ACCEPTED,

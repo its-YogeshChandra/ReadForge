@@ -90,6 +90,7 @@ def supervisor(state: EOCState) -> dict[str, Any]:
         LLMProvider.invoke_json(
             SUPERVISOR_PROMPT,
             case.model_dump(mode="json"),
+            RouterDecision,
         )
     )
     return decision.model_dump()
@@ -109,6 +110,7 @@ def _run_specialist(
         LLMProvider.invoke_json(
             SPECIALIST_PROMPTS[intent] + OUTPUT_INSTRUCTIONS,
             case.model_dump(mode="json"),
+            AgentResponse,
         )
     )
     result: AgentResult = {

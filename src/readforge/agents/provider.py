@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import requests
+from pydantic import BaseModel
 
 
 class LLMProviderError(RuntimeError):
@@ -14,8 +15,12 @@ class LLMProviderError(RuntimeError):
 
 class LLMProvider:
     @staticmethod
-    def invoke_json(system_prompt: str, request: dict[str, Any]) -> dict[str, Any]:
-        for attempt in range(3):
+    def invoke_json(
+        system_prompt: str,
+        request: dict[str, Any],
+        response_model: type[BaseModel],
+    ) -> dict[str, Any]:
+        for attempt in range(2):
             try:
                 response = requests.post(
                     os.getenv(
@@ -34,16 +39,39 @@ class LLMProvider:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": json.dumps(request)},
                         ],
-                        "response_format": {"type": "json_object"},
-                        "max_completion_tokens": 1200,
+                        "provider": {
+                            "require_parameters": True,
+                            "sort": "price",
+                            "max_price": {
+                                "prompt": float(
+                                    os.getenv("OPENROUTER_MAX_INPUT_PRICE", "0.60")
+                                ),
+                                "completion": float(
+                                    os.getenv("OPENROUTER_MAX_OUTPUT_PRICE", "1.75")
+                                ),
+                            },
+                        },
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": response_model.__name__.lower(),
+                                "strict": True,
+                                "schema": response_model.model_json_schema(),
+                            },
+                        },
+                        "plugins": [{"id": "response-healing"}],
+                        "max_completion_tokens": 2400,
                         "stream": False,
                     },
                     timeout=(5, 100),
                 )
                 response.raise_for_status()
-                break
+                content = response.json()["choices"][0]["message"]["content"]
+                return response_model.model_validate_json(content).model_dump(
+                    mode="json"
+                )
             except requests.HTTPError as error:
-                if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
+                if response.status_code in {429, 500, 502, 503, 504} and attempt < 1:
                     time.sleep(2**attempt)
                     continue
                 try:
@@ -54,18 +82,16 @@ class LLMProvider:
                     f"OpenRouter request failed ({response.status_code}): {detail}"
                 ) from error
             except requests.RequestException as error:
-                if attempt < 2:
+                if attempt < 1:
                     time.sleep(2**attempt)
                     continue
                 raise LLMProviderError("OpenRouter request failed") from error
+            except (KeyError, IndexError, TypeError, ValueError) as error:
+                if attempt < 1:
+                    time.sleep(2**attempt)
+                    continue
+                raise LLMProviderError(
+                    "OpenRouter returned invalid structured JSON after 2 attempts"
+                ) from error
 
-        try:
-            content = response.json()["choices"][0]["message"]["content"]
-            result = json.loads(content)
-        except (KeyError, IndexError, TypeError, ValueError) as error:
-            raise LLMProviderError(
-                "OpenRouter returned invalid structured JSON"
-            ) from error
-        if not isinstance(result, dict):
-            raise LLMProviderError("OpenRouter response must be a JSON object")
-        return result
+        raise LLMProviderError("OpenRouter request failed")

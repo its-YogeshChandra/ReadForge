@@ -47,7 +47,7 @@ class RouterDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intents: list[AgentIntent] = Field(max_length=4)
-    clarification_question: str | None = None
+    clarification_question: str | None
 
     @model_validator(mode="after")
     def decision_has_one_path(self) -> "RouterDecision":
@@ -63,9 +63,9 @@ class AgentFinding(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     conclusion: str = Field(min_length=1)
-    evidence_ids: list[str] = Field(default_factory=list)
-    missing_information: list[str] = Field(default_factory=list)
-    conflicts: list[str] = Field(default_factory=list)
+    evidence_ids: list[str]
+    missing_information: list[str]
+    conflicts: list[str]
 
 
 class AgentResponse(BaseModel):
