@@ -18,6 +18,7 @@ from readforge.controllers.document_metadata_controller import (
     DocumentMetadataResponse,
     update_document_metadata,
 )
+from readforge.controllers.job_controller import JobStatusResponse, job_status
 from readforge.database import close_database
 from readforge.utils.redis_utils import close_redis_client
 
@@ -77,6 +78,16 @@ async def health_check() -> dict[str, bool]:
 async def create_document_job(request: UploadDocRequest) -> JSONResponse:
     """Queue an existing R2 document for processing."""
     return await upload_doc(request)
+
+
+@app.get(
+    "/jobs/{job_id}",
+    response_model=JobStatusResponse,
+    tags=["Documents"],
+)
+async def get_job_status(job_id: UUID) -> JobStatusResponse:
+    """Return the processing state for one upload request."""
+    return await job_status(job_id)
 
 
 @app.post(

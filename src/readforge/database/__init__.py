@@ -9,7 +9,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg://readforge:readforge@localhost:5432/readforge",
+    "postgresql+psycopg://readforge:readforge@localhost:5433/readforge",
 )
 
 engine = create_async_engine(DATABASE_URL)

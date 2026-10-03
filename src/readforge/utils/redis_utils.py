@@ -119,6 +119,14 @@ async def create_job(request: RedisJobRequest) -> RedisJob:
     return RedisJob.model_validate_json(stored_payload)
 
 
+async def get_job(job_id: str) -> RedisJob | None:
+    """Return a queued job while its Redis trace is retained."""
+    payload = await get_redis_client().get(_job_key(job_id))
+    if not isinstance(payload, (str, bytes, bytearray)):
+        return None
+    return RedisJob.model_validate_json(payload)
+
+
 def _as_text(value: str | bytes) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else value
 

@@ -172,6 +172,7 @@ interface UploadFormProps {
   /** Callback fired when a file upload completes successfully. */
   onUploadComplete?: (info: {
     documentId: string;
+    jobId: string;
     fileName: string;
     checksum: string;
   }) => void;
@@ -349,6 +350,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
       const boundaries = calculateChunkBoundaries(file.size);
       const totalChunks = boundaries.length;
       let documentId: string | undefined;
+      let jobId: string | undefined;
 
       for (let i = 0; i < boundaries.length; i++) {
         if (abortRef.current) return;
@@ -395,9 +397,10 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
           return;
         }
         documentId = result.documentId ?? documentId;
+        jobId = result.jobId ?? jobId;
       }
 
-      if (!documentId) {
+      if (!documentId || !jobId) {
         setUploadProgress({
           status: 'error',
           progress: 100,
@@ -427,6 +430,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
       // Notify parent so the chat window can be activated
       onUploadComplete?.({
         documentId,
+        jobId,
         fileName: file.name,
         checksum,
       });
