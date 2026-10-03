@@ -1,19 +1,17 @@
-"""Client for the self-hosted text embedding service."""
+"""OpenRouter text embedding client."""
 
 from dataclasses import dataclass
 from math import isfinite
 import os
 import time
 
-from dotenv import load_dotenv
 import requests
 
-load_dotenv()
+OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings"
 
 
-# need to add retry true or false value
 class EmbeddingServiceError(RuntimeError):
-    """The embedding service could not return a usable vector."""
+    """OpenRouter could not return a usable embedding vector."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,20 +30,32 @@ class EmbeddingsPayload:
             raise ValueError("text_data must not be empty")
 
 
-def embed_text(data: EmbeddingsPayload) -> list[float]:
-    """Return one embedding vector for ``data.text_data``."""
-    if not isinstance(data, EmbeddingsPayload):
-        raise TypeError("data must be an EmbeddingsPayload")
+def embedding_model() -> str:
+    """Return the configured OpenRouter embedding model."""
+    model = os.getenv("OPENROUTER_EMBEDDING_MODEL", "").strip()
+    if not model:
+        raise EmbeddingServiceError("OPENROUTER_EMBEDDING_MODEL is not set")
+    return model
 
-    api_url = os.getenv("CLIP_API_URL", "")
-    if not api_url:
-        raise EmbeddingServiceError("CLIP_API_URL is not set")
+
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Return one OpenRouter embedding for each input string."""
+    if not texts or any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise ValueError("texts must contain non-empty strings")
+
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key:
+        raise EmbeddingServiceError("OPENROUTER_API_KEY is not set")
 
     for attempt in range(3):
         try:
             response = requests.post(
-                f"{api_url}embedding/text",
-                json={"texts": [data.text_data]},
+                OPENROUTER_EMBEDDINGS_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": embedding_model(), "input": texts},
                 timeout=(5, 120),
             )
             response.raise_for_status()
@@ -53,7 +63,7 @@ def embed_text(data: EmbeddingsPayload) -> list[float]:
             break
         except requests.exceptions.JSONDecodeError as error:
             raise EmbeddingServiceError(
-                "Embedding service returned invalid JSON"
+                "OpenRouter returned invalid embedding JSON"
             ) from error
         except requests.RequestException as error:
             status_code = getattr(error.response, "status_code", None)
@@ -63,28 +73,53 @@ def embed_text(data: EmbeddingsPayload) -> list[float]:
                 502,
                 503,
                 504,
+                524,
+                529,
             }
             if retryable and attempt < 2:
                 time.sleep(2**attempt)
                 continue
-            raise EmbeddingServiceError("Embedding request failed") from error
+            try:
+                detail = error.response.json()["error"]["message"]
+            except (AttributeError, KeyError, TypeError, ValueError):
+                detail = "Embedding request failed"
+            raise EmbeddingServiceError(
+                f"OpenRouter embedding request failed ({status_code}): {detail}"
+            ) from error
 
-    if (
-        not isinstance(body, list)
-        or len(body) != 1
-        or not isinstance(body[0], dict)
-        or not isinstance(body[0].get("vector"), list)
-        or not body[0]["vector"]
-    ):
-        raise EmbeddingServiceError("Embedding service returned an invalid response")
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list) or len(data) != len(texts):
+        raise EmbeddingServiceError("OpenRouter returned an invalid embedding response")
 
-    vector = body[0]["vector"]
-    if any(
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not isfinite(value)
-        for value in vector
-    ):
-        raise EmbeddingServiceError("Embedding vector contains an invalid value")
+    if any(not isinstance(item, dict) for item in data):
+        raise EmbeddingServiceError("OpenRouter returned an invalid embedding response")
+    ordered = sorted(data, key=lambda item: item.get("index", -1))
+    vectors: list[list[float]] = []
+    for index, item in enumerate(ordered):
+        vector = item.get("embedding") if isinstance(item, dict) else None
+        if (
+            not isinstance(item, dict)
+            or item.get("index") != index
+            or not isinstance(vector, list)
+            or not vector
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                for value in vector
+            )
+        ):
+            raise EmbeddingServiceError(
+                "OpenRouter returned an invalid embedding response"
+            )
+        vectors.append([float(value) for value in vector])
+    if len({len(vector) for vector in vectors}) != 1:
+        raise EmbeddingServiceError("OpenRouter returned inconsistent vector sizes")
+    return vectors
 
-    return [float(value) for value in vector]
+
+def embed_text(data: EmbeddingsPayload) -> list[float]:
+    """Return one embedding vector for ``data.text_data``."""
+    if not isinstance(data, EmbeddingsPayload):
+        raise TypeError("data must be an EmbeddingsPayload")
+    return embed_texts([data.text_data])[0]

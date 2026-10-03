@@ -25,18 +25,6 @@ services:
       timeout: 3s
       retries: 15
 
-  clip:
-    image: ai4all/clip
-    ports:
-      - "${CLIP_PORT:-8082}:8000"
-    volumes:
-      - clip_models:/models
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=2)"]
-      interval: 5s
-      timeout: 3s
-      retries: 60
-
   minio:
     image: bitnami/minio@sha256:f651556c9adf011d17e3e1646079f34906ecce43aaf73deeafa08d7a25872db4
     environment:
@@ -56,5 +44,4 @@ services:
 
 volumes:
   postgres_data:
-  clip_models:
   minio_data:

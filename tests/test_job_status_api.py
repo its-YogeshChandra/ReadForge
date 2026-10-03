@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import readforge.controllers.job_controller as controller
 from readforge.server import app
-from readforge.utils.redis_utils import RedisJob
+from readforge.utils.redis_utils import RedisJob, RedisJobStatus
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -31,6 +31,11 @@ def test_job_status_traces_queued_and_completed(monkeypatch) -> None:
     job_id = uuid4()
     created_at = datetime.now(UTC)
     monkeypatch.setattr(controller, "SessionLocal", lambda: _Session(None))
+
+    async def no_retained_status(_job_id: str):
+        return None
+
+    monkeypatch.setattr(controller, "get_redis_job_status", no_retained_status)
 
     async def queued_job(_job_id: str):
         return RedisJob(
@@ -67,3 +72,26 @@ def test_job_status_traces_queued_and_completed(monkeypatch) -> None:
     assert completed.status_code == 200
     assert completed.json()["status"] == "completed"
     assert completed.json()["document_id"] == str(document_id)
+
+
+def test_job_status_uses_retained_redis_transition(monkeypatch) -> None:
+    job_id = uuid4()
+    document_id = uuid4()
+    created_at = datetime.now(UTC)
+    monkeypatch.setattr(controller, "SessionLocal", lambda: _Session(None))
+
+    async def retained_status(_job_id: str):
+        return RedisJobStatus(
+            job_id=str(job_id),
+            document_id=str(document_id),
+            status="completed",
+            created_at=created_at,
+            completed_at=created_at,
+        )
+
+    monkeypatch.setattr(controller, "get_redis_job_status", retained_status)
+    response = client.get(f"/jobs/{job_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["document_id"] == str(document_id)

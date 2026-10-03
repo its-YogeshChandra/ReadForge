@@ -18,6 +18,7 @@ from readforge.utils.reading_util import (
     verify_object_checksum_metadata,
 )
 from readforge.utils.redis_utils import RedisJobRequest, create_job
+from readforge.utils.tracing import trace
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,12 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             ),
         )
 
+    trace(
+        job.job_id,
+        "document.queued",
+        document_id=document_id,
+        object_key=request.file_name,
+    )
     return _response(
         status.HTTP_202_ACCEPTED,
         UploadResponse(

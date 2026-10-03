@@ -9,7 +9,11 @@ from sqlalchemy import or_, select
 from readforge.agents.state import Evidence
 from readforge.database import SessionLocal
 from readforge.database.schema import Document, DocumentChunk
-from readforge.utils.embedding_utils import EmbeddingsPayload, embed_text
+from readforge.utils.embedding_utils import (
+    EmbeddingsPayload,
+    embed_text,
+    embedding_model,
+)
 
 _MEDICAL_CODE = re.compile(
     r"(?<![A-Z0-9])(?:\d{5}|[A-Z]\d{4}|[A-Z]\d{2}(?:\.[A-Z0-9]{1,4})?)(?![A-Z0-9])",
@@ -38,13 +42,17 @@ async def retrieve_evidence(
     limit: int = 8,
 ) -> list[Evidence]:
     """Return exact-code matches followed by nearest semantic page chunks."""
+    model = embedding_model()
     async with SessionLocal() as session:
         document = await session.get(Document, document_id)
         if document is None:
             raise DocumentNotFoundError("Document was not found")
         chunk_id = await session.scalar(
             select(DocumentChunk.id)
-            .where(DocumentChunk.document_id == document_id)
+            .where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.embedding_model == model,
+            )
             .limit(1)
         )
     if chunk_id is None:
@@ -65,6 +73,7 @@ async def retrieve_evidence(
                         select(DocumentChunk)
                         .where(
                             DocumentChunk.document_id == document_id,
+                            DocumentChunk.embedding_model == model,
                             or_(
                                 *(
                                     DocumentChunk.content.ilike(f"%{code}%")
@@ -82,7 +91,10 @@ async def retrieve_evidence(
             (
                 await session.scalars(
                     select(DocumentChunk)
-                    .where(DocumentChunk.document_id == document_id)
+                    .where(
+                        DocumentChunk.document_id == document_id,
+                        DocumentChunk.embedding_model == model,
+                    )
                     .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
                     .limit(limit)
                 )

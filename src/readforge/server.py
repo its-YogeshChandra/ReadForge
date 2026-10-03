@@ -2,10 +2,10 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from readforge.controllers.chat_controller import ChatRequest, ChatResponse, chat
 from readforge.controllers.doc_controller import (
@@ -18,7 +18,11 @@ from readforge.controllers.document_metadata_controller import (
     DocumentMetadataResponse,
     update_document_metadata,
 )
-from readforge.controllers.job_controller import JobStatusResponse, job_status
+from readforge.controllers.job_controller import (
+    JobStatusResponse,
+    job_events,
+    job_status,
+)
 from readforge.database import close_database
 from readforge.utils.redis_utils import close_redis_client
 
@@ -90,14 +94,24 @@ async def get_job_status(job_id: UUID) -> JobStatusResponse:
     return await job_status(job_id)
 
 
+@app.get("/jobs/{job_id}/events", tags=["Documents"])
+async def stream_job_status(job_id: UUID) -> StreamingResponse:
+    """Stream processing transitions for one upload request."""
+    return await job_events(job_id)
+
+
 @app.post(
     "/chat",
     response_model=ChatResponse,
     tags=["Conversations"],
 )
-async def create_chat_message(request: ChatRequest) -> ChatResponse:
+async def create_chat_message(
+    request: ChatRequest,
+    http_request: Request,
+) -> ChatResponse:
     """Answer one question using evidence retrieved from an uploaded document."""
-    return await chat(request)
+    correlation_id = http_request.headers.get("x-request-id") or str(uuid4())
+    return await chat(request, correlation_id)
 
 
 @app.patch(

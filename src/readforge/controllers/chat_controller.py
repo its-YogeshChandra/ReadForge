@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 from functools import partial
 import re
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +25,7 @@ from readforge.utils.retrieval import (
     DocumentNotReadyError,
     retrieve_evidence,
 )
+from readforge.utils.tracing import trace
 
 _COVERAGE_YEAR = re.compile(r"\b(?:20\d{2}|2100)\b")
 # ponytail: process-local cap; use a Redis lease when the API runs multiple workers.
@@ -110,24 +111,32 @@ def _case_from_request(
     return case
 
 
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+    correlation_id: str | None = None,
+) -> ChatResponse:
     """Retrieve document evidence, run the agents, and persist both messages."""
+    request_id = correlation_id or str(uuid4())
+    trace(request_id, "chat.received", document_id=request.document_id)
     try:
         messages = await load_conversation_messages(
             request.document_id,
             request.conversation_id,
         )
         case = _case_from_request(request, messages)
+        trace(request_id, "chat.retrieval_started")
         evidence = await retrieve_evidence(
             request.document_id,
             case["question"],
         )
+        trace(request_id, "chat.retrieval_completed", evidence_count=len(evidence))
         if evidence:
             case["plan_name"] = case["plan_name"] or evidence[0].plan_name
             case["coverage_year"] = (
                 case["coverage_year"] or evidence[0].coverage_year
             )
         case["evidence"] = [item.model_dump(mode="json") for item in evidence]
+        trace(request_id, "chat.agents_started")
         async with _AGENT_REQUEST_CAP:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -140,6 +149,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 timeout=120,
             )
         response = result["final_response"]
+        trace(
+            request_id,
+            "chat.agents_completed",
+            agent_count=len(response.get("results", [])),
+        )
         created_at = datetime.now(UTC).isoformat()
         stored_case = {
             key: value.isoformat() if isinstance(value, date) else value
@@ -166,26 +180,34 @@ async def chat(request: ChatRequest) -> ChatResponse:
             ],
         )
     except DocumentNotFoundError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
     except DocumentNotReadyError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except ConversationNotFoundError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
     except ConversationDocumentMismatchError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except (EmbeddingServiceError, LLMProviderError) as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
     except TimeoutError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             "Agent request timed out",
         ) from error
     except SQLAlchemyError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Database is unavailable",
         ) from error
 
+    trace(request_id, "chat.completed", conversation_id=conversation_id)
     return ChatResponse(
         conversation_id=conversation_id,
         evidence_count=len(evidence),

@@ -1,12 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import UploadForm from '@/components/upload/UploadForm';
-import ChatWindow from '@/components/chat/ChatWindow';
-import { getJobStatus } from '@/utils/api/jobApi';
-import type { JobStatus } from '@/utils/types/job';
-
-const JOB_POLL_INTERVAL = 2_000;
+import type { JobStatus, JobStatusResponse } from '@/utils/types/job';
 
 interface UploadResult {
   documentId: string;
@@ -16,8 +13,8 @@ interface UploadResult {
 }
 
 export default function UploadPage() {
+  const router = useRouter();
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-  const [showChat, setShowChat] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [processingError, setProcessingError] = useState<string | null>(null);
 
@@ -25,7 +22,6 @@ export default function UploadPage() {
   const handleUploadComplete = useCallback(
     (info: UploadResult) => {
       setUploadResult(info);
-      setShowChat(false);
       setJobStatus('queued');
       setProcessingError(null);
     },
@@ -33,41 +29,43 @@ export default function UploadPage() {
   );
 
   useEffect(() => {
-    if (!uploadResult || showChat || jobStatus === 'failed') return;
+    if (!uploadResult) return;
 
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const poll = async () => {
+    const events = new EventSource(
+      `/api/jobs/${encodeURIComponent(uploadResult.jobId)}/events`,
+    );
+    events.onmessage = (message) => {
       try {
-        const job = await getJobStatus(uploadResult.jobId, controller.signal);
+        const job = JSON.parse(message.data) as JobStatusResponse;
         setJobStatus(job.status);
         setProcessingError(job.status === 'failed' ? job.error_message : null);
         if (job.status === 'completed') {
           if (job.document_id !== uploadResult.documentId) {
             setProcessingError('Completed job does not match the uploaded document.');
             setJobStatus('failed');
+            events.close();
             return;
           }
-          setShowChat(true);
-          return;
+          events.close();
+          const params = new URLSearchParams({
+            documentId: uploadResult.documentId,
+            documentName: uploadResult.fileName,
+          });
+          router.push(`/chat?${params.toString()}`);
         }
-        if (job.status === 'failed') return;
+        if (job.status === 'failed') events.close();
       } catch (error) {
-        if (controller.signal.aborted) return;
         setProcessingError(
-          error instanceof Error ? error.message : 'Could not read processing status.',
+          error instanceof Error ? error.message : 'Invalid processing status received.',
         );
       }
-      timer = setTimeout(poll, JOB_POLL_INTERVAL);
+    };
+    events.onerror = () => {
+      setProcessingError('Processing updates disconnected. Reconnecting...');
     };
 
-    void poll();
-    return () => {
-      controller.abort();
-      if (timer) clearTimeout(timer);
-    };
-  }, [jobStatus, showChat, uploadResult]);
+    return () => events.close();
+  }, [router, uploadResult]);
 
   return (
     <main className="min-h-screen bg-[--color-bg-warm] py-12 px-4 sm:px-6 lg:px-8">
@@ -84,7 +82,7 @@ export default function UploadPage() {
       {/* Upload Form */}
       <UploadForm onUploadComplete={handleUploadComplete} />
 
-      {uploadResult && !showChat && (
+      {uploadResult && (
         <div className="w-full max-w-3xl mx-auto mt-6">
           <div className="flex items-center justify-center gap-3 py-4 px-6 bg-[--color-card-white] rounded-[--radius-card] shadow-[--shadow-card]">
             {jobStatus !== 'failed' && (
@@ -103,15 +101,6 @@ export default function UploadPage() {
         </div>
       )}
 
-      {uploadResult && showChat && (
-        <div className="mt-6">
-          <ChatWindow
-            key={uploadResult.documentId}
-            documentId={uploadResult.documentId}
-            documentName={uploadResult.fileName}
-          />
-        </div>
-      )}
     </main>
   );
 }

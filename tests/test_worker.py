@@ -1,6 +1,6 @@
 """Integration tests for the ``worker.py`` PDF → OCR → embedding pipeline.
 
-These tests exercise the real Redis, PostgreSQL, R2, Apple Vision, and CLIP
+These tests exercise the real Redis, PostgreSQL, R2, Apple Vision, and OpenRouter
 embedding services exactly as the production worker does.  Nothing is
 monkeypatched.
 
@@ -9,7 +9,7 @@ Prerequisites before running:
     • Schema is initialised:               ``uv run readforge-migrate``
     • Redis is running:                     ``docker compose up -d redis`` (or local)
     • R2 credentials are in ``.env``
-    • CLIP embedding service is reachable at ``CLIP_API_URL``
+    • OpenRouter embedding credentials and model are configured
     • ``EXISTING_MEDIA_FILE`` points to a real PDF in the R2 ``datasets`` bucket
     • ``EXISTING_MEDIA_SHA256`` contains that PDF's trusted SHA-256 checksum
     • macOS with Apple Vision framework
@@ -259,14 +259,15 @@ class TestOcrPipeline:
             assert isinstance(result.file_data, dict)
 
 
-# what : Sends real page text to the CLIP embedding service.
+# what : Sends real page text to the OpenRouter embedding service.
 # why  : The worker stores these vectors in pgvector; the service must return
 #         a list of finite floats for every non-empty page.
 class TestEmbedding:
     def test_embed_text_returns_float_vector(self) -> None:
-        clip_url = os.getenv("CLIP_API_URL", "")
-        if not clip_url:
-            pytest.skip("CLIP_API_URL is not configured")
+        if not os.getenv("OPENROUTER_API_KEY") or not os.getenv(
+            "OPENROUTER_EMBEDDING_MODEL"
+        ):
+            pytest.skip("OpenRouter embeddings are not configured")
 
         payload = EmbeddingsPayload(
             file_name=EXISTING_MEDIA_FILE,
@@ -279,9 +280,10 @@ class TestEmbedding:
         assert all(isinstance(v, float) for v in vector)
 
     def test_embed_pages_returns_tuples(self) -> None:
-        clip_url = os.getenv("CLIP_API_URL", "")
-        if not clip_url:
-            pytest.skip("CLIP_API_URL is not configured")
+        if not os.getenv("OPENROUTER_API_KEY") or not os.getenv(
+            "OPENROUTER_EMBEDDING_MODEL"
+        ):
+            pytest.skip("OpenRouter embeddings are not configured")
 
         ocr_results = [
             OcrResponse(
@@ -464,9 +466,10 @@ class TestRedisOperations:
 #         If any seam breaks between real services, this test catches it.
 class TestProcessJob:
     def test_process_job_end_to_end(self) -> None:
-        clip_url = os.getenv("CLIP_API_URL", "")
-        if not clip_url:
-            pytest.skip("CLIP_API_URL is not configured")
+        if not os.getenv("OPENROUTER_API_KEY") or not os.getenv(
+            "OPENROUTER_EMBEDDING_MODEL"
+        ):
+            pytest.skip("OpenRouter embeddings are not configured")
         if EXISTING_MEDIA_CHECKSUM == "0" * 64:
             pytest.skip("EXISTING_MEDIA_SHA256 is not configured")
 
@@ -600,7 +603,7 @@ class TestOcrUtilNegative:
 
 
 # what : Verifies the embedding client rejects empty and invalid payloads.
-# why  : Empty text or missing config must fail fast, not send garbage to CLIP.
+# why  : Empty text or missing config must fail fast, not send garbage upstream.
 class TestEmbeddingNegative:
     def test_empty_text_raises(self) -> None:
         with pytest.raises(ValueError, match="text_data must not be empty"):
@@ -625,7 +628,7 @@ class TestEmbeddingNegative:
 
 # what : Verifies _embed_pages skips OCR results with no text.
 # why  : Pages with blank or whitespace-only text must not produce embeddings
-#         or crash the CLIP service.
+#         or call the embedding service.
 class TestEmbedPagesNegative:
     def test_empty_text_pages_produce_no_chunks(self) -> None:
         results = [
