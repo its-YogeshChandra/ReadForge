@@ -13,11 +13,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
 import readforge.controllers.doc_controller as controller
 from readforge.server import app
-from readforge.utils.media_bucket import MediaBucketUnavailableError
 from readforge.utils.reading_util import FileTamperingError
 
 # Replace this with an object key that currently exists in the media bucket.
@@ -172,7 +172,6 @@ def test_checksum_metadata_mismatch_returns_409(
     def reject_checksum(_file_name: str, _checksum: str) -> None:
         raise FileTamperingError("checksum mismatch")
 
-    monkeypatch.setattr(controller, "ensure_media_bucket_available", lambda: None)
     monkeypatch.setattr(controller, "is_file_exist", object_exists)
     monkeypatch.setattr(
         controller,
@@ -198,14 +197,20 @@ def test_checksum_metadata_mismatch_returns_409(
     }
 
 
-def test_unavailable_media_bucket_returns_503(
+def test_unavailable_media_operation_returns_503(
     api_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unavailable() -> None:
-        raise MediaBucketUnavailableError("unavailable")
+    async def unavailable(_file_name: str) -> bool:
+        raise ClientError(
+            {
+                "Error": {"Code": "ServiceUnavailable", "Message": "retry"},
+                "ResponseMetadata": {"HTTPStatusCode": 503},
+            },
+            "HeadObject",
+        )
 
-    monkeypatch.setattr(controller, "ensure_media_bucket_available", unavailable)
+    monkeypatch.setattr(controller, "is_file_exist", unavailable)
 
     response = api_client.post(
         "/documents",

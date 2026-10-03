@@ -10,11 +10,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
 from readforge.utils.db_utils import ChecksumConflictError, ensure_document
-from readforge.utils.media_bucket import (
-    MediaBucketUnavailableError,
-    ensure_available as ensure_media_bucket_available,
-    is_unavailable_error,
-)
+from readforge.utils.media_bucket import is_unavailable_error
 from readforge.utils.reading_util import (
     FileTamperingError,
     create_presigned_url,
@@ -77,7 +73,6 @@ def _response(status_code: int, payload: UploadResponse) -> JSONResponse:
 async def upload_doc(request: UploadDocRequest) -> JSONResponse:
     """Validate an R2 document and enqueue it for asynchronous processing."""
     try:
-        ensure_media_bucket_available()
         file_exists = await is_file_exist(request.file_name)
         if not file_exists:
             return _response(
@@ -97,15 +92,6 @@ async def upload_doc(request: UploadDocRequest) -> JSONResponse:
             UploadResponse(
                 success=False,
                 message="File integrity verification failed",
-            ),
-        )
-    except MediaBucketUnavailableError:
-        logger.exception("Document storage is unavailable")
-        return _response(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            UploadResponse(
-                success=False,
-                message="Document storage is temporarily unavailable",
             ),
         )
     except (BotoCoreError, ClientError) as error:

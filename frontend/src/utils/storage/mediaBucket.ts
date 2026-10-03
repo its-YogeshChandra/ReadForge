@@ -2,7 +2,6 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
-  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -49,7 +48,7 @@ function storage(): { client: S3Client; bucket: string } {
     : { client: getR2Client(), bucket: getR2Bucket() };
 }
 
-function storageError(error: unknown, healthCheck = false): MediaBucketError {
+function storageError(error: unknown): MediaBucketError {
   if (error instanceof MediaBucketError) return error;
 
   const metadata =
@@ -59,7 +58,6 @@ function storageError(error: unknown, healthCheck = false): MediaBucketError {
   const name = error instanceof Error ? error.name : '';
   const status = metadata?.httpStatusCode;
   const unavailable =
-    healthCheck ||
     status === undefined ||
     status === 429 ||
     status >= 500 ||
@@ -77,16 +75,8 @@ async function send<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (error) {
+    console.error('[media-bucket] Original storage error:', error);
     throw storageError(error);
-  }
-}
-
-export async function ensureMediaBucketAvailable(): Promise<void> {
-  const { client, bucket } = storage();
-  try {
-    await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch (error) {
-    throw storageError(error, true);
   }
 }
 

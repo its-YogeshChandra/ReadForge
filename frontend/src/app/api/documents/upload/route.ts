@@ -6,7 +6,6 @@ import {
   uploadPart,
   completeMultipartUpload,
   abortMultipartUpload,
-  ensureMediaBucketAvailable,
   MediaBucketError,
 } from '@/utils/storage/mediaBucket';
 import {
@@ -156,8 +155,6 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-
-    await ensureMediaBucketAvailable();
 
     /* ── Build the media object key with UUID ── */
     // Insert a UUID before the file extension to guarantee unique keys.

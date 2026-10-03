@@ -7,10 +7,6 @@ from botocore.exceptions import BotoCoreError, ClientError
 from readforge.utils import cloudflare_r2, minio_storage
 
 
-class MediaBucketUnavailableError(RuntimeError):
-    """The configured media bucket cannot currently accept requests."""
-
-
 _UNAVAILABLE_CODES = {
     "AccessDenied",
     "ExpiredRequest",
@@ -57,13 +53,3 @@ def is_unavailable_error(error: BotoCoreError | ClientError) -> bool:
         or (isinstance(status_code, int) and status_code >= 500)
         or error_code in _UNAVAILABLE_CODES
     )
-
-
-def ensure_available() -> None:
-    """Verify the selected provider, credentials, and bucket with HeadBucket."""
-    try:
-        get_client().head_bucket(Bucket=get_bucket_name())
-    except (BotoCoreError, ClientError, ValueError) as error:
-        raise MediaBucketUnavailableError(
-            "Document storage is temporarily unavailable"
-        ) from error
