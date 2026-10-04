@@ -73,17 +73,14 @@ def normalize_case(state: EOCState) -> dict[str, CaseInput]:
 
 def supervisor(state: EOCState) -> dict[str, Any]:
     case = CaseInput.model_validate(state["case"])
-    missing = []
-    if not case.plan_name:
-        missing.append("the exact plan name")
-    if case.coverage_year is None:
-        missing.append("the coverage year")
     if not case.evidence:
-        missing.append("relevant EOC or insurer evidence")
-    if missing:
         return {
             "intents": [],
-            "clarification_question": "Please provide " + ", ".join(missing) + ".",
+            "clarification_question": (
+                "I could not find relevant evidence in this document. "
+                "Please rephrase the question or include the exact service, "
+                "code, denial reason, or referral type."
+            ),
         }
 
     decision = RouterDecision.model_validate(

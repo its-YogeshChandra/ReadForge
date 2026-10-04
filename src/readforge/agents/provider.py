@@ -42,14 +42,6 @@ class LLMProvider:
                         "provider": {
                             "require_parameters": True,
                             "sort": "price",
-                            "max_price": {
-                                "prompt": float(
-                                    os.getenv("OPENROUTER_MAX_INPUT_PRICE", "0.60")
-                                ),
-                                "completion": float(
-                                    os.getenv("OPENROUTER_MAX_OUTPUT_PRICE", "1.75")
-                                ),
-                            },
                         },
                         "response_format": {
                             "type": "json_schema",

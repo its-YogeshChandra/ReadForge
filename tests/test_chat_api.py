@@ -247,7 +247,58 @@ def test_chat_returns_502_for_embedding_failure(monkeypatch) -> None:
     response = client.post("/chat", json=_payload())
 
     assert response.status_code == 502
-    assert response.json() == {"detail": "Embedding request failed"}
+    assert response.json() == {
+        "detail": "Document search is temporarily unavailable"
+    }
+
+
+def test_chat_remembers_explicit_coverage_year(monkeypatch) -> None:
+    saved: dict = {}
+
+    async def fake_retrieve(*args, **kwargs) -> list[Evidence]:
+        return [
+            Evidence(
+                evidence_id="chunk-7",
+                page_number=12,
+                content="Office visits are covered.",
+                document_type="eoc",
+                official=False,
+            )
+        ]
+
+    async def fake_remember(document_id, coverage_year) -> bool:
+        saved.update(document_id=document_id, coverage_year=coverage_year)
+        return True
+
+    def fake_invoke(payload, **kwargs) -> dict:
+        saved["case"] = payload["case"]
+        return {"final_response": _workflow_response()}
+
+    async def fake_append(*args, **kwargs) -> object:
+        return uuid4()
+
+    monkeypatch.setattr(controller, "retrieve_evidence", fake_retrieve)
+    monkeypatch.setattr(
+        controller,
+        "remember_document_coverage_year",
+        fake_remember,
+    )
+    monkeypatch.setattr(
+        controller,
+        "workflow",
+        SimpleNamespace(invoke=fake_invoke),
+    )
+    monkeypatch.setattr(controller, "append_conversation_messages", fake_append)
+    payload = _payload()
+    payload.pop("coverage_year")
+    payload["message"] = "Coverage year is 2026. Are office visits covered?"
+
+    response = client.post("/chat", json=payload)
+
+    assert response.status_code == 200
+    assert saved["coverage_year"] == 2026
+    assert saved["case"]["coverage_year"] == 2026
+    assert saved["case"]["evidence"][0]["coverage_year"] == 2026
 
 
 # ═══════════════════════════════════════════════════════════════════════════

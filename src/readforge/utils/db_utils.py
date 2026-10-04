@@ -98,6 +98,24 @@ async def load_conversation_messages(
         return list(conversation.messages)
 
 
+async def remember_document_coverage_year(
+    document_id: UUID,
+    coverage_year: int,
+) -> bool:
+    """Fill missing document coverage metadata supplied during a conversation."""
+    async with SessionLocal() as session:
+        document = await session.scalar(
+            select(Document)
+            .where(Document.id == document_id)
+            .with_for_update()
+        )
+        if document is None or document.coverage_year is not None:
+            return False
+        document.coverage_year = coverage_year
+        await session.commit()
+        return True
+
+
 async def start_job(
     job_id: str,
     object_key: str,

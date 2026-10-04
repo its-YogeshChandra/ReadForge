@@ -94,6 +94,13 @@ function TypingIndicator() {
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const missingInformation = [
+    ...new Set(
+      message.result?.results.flatMap((result) =>
+        result.findings.flatMap((finding) => finding.missing_information),
+      ) ?? [],
+    ),
+  ];
 
   if (isSystem) {
     return (
@@ -161,6 +168,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                 Human review recommended
               </p>
             )}
+            {missingInformation.length > 0 && (
+              <p className="mt-2 text-amber-700">
+                Missing context: {missingInformation.join(', ')}
+              </p>
+            )}
             <p className="mt-2 text-[--color-muted-grey]">
               {message.result.notice}
             </p>
@@ -190,7 +202,7 @@ export default function ChatWindow({
     {
       id: 'system_welcome',
       role: 'system',
-      content: `Document "${documentName}" loaded — you can now ask questions about it.`,
+      content: `Document "${documentName}" loaded. Ask about coverage, referrals, denials, or prior authorization. Missing plan details will lower confidence instead of blocking the answer.`,
       timestamp: new Date().toISOString(),
     },
   ]);
@@ -314,7 +326,7 @@ export default function ChatWindow({
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ask a question about your document..."
+              placeholder="Ask about coverage, a medical code, referral, or denial..."
               disabled={isLoading}
               maxLength={8000}
               className="

@@ -41,6 +41,8 @@ def test_structured_request_retries_invalid_json() -> None:
         "clarification_question",
     }
     assert payload["provider"]["require_parameters"] is True
+    assert payload["provider"]["sort"] == "price"
+    assert "max_price" not in payload["provider"]
 
 
 def test_invalid_json_exhaustion_is_an_upstream_error() -> None:

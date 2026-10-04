@@ -86,7 +86,40 @@ class MultiAgentWorkflowTest(unittest.TestCase):
         response = result["final_response"]
         self.assertEqual(response["results"], [])
         self.assertIsNone(response["overall_evidence_score"])
-        self.assertIn("exact plan name", response["clarification_question"])
+        self.assertIn("relevant evidence", response["clarification_question"])
+
+    def test_missing_plan_metadata_does_not_block_document_answer(self) -> None:
+        def fake_response(system_prompt: str, *_args) -> dict:
+            if "intent router" in system_prompt:
+                return {"intents": ["coverage"], "clarification_question": None}
+            return {
+                "findings": [
+                    {
+                        "conclusion": "The document describes office visits.",
+                        "evidence_ids": ["E1"],
+                        "missing_information": ["Plan year"],
+                        "conflicts": [],
+                    }
+                ]
+            }
+
+        case = {
+            "question": "Are office visits covered?",
+            "evidence": [
+                {
+                    "evidence_id": "E1",
+                    "page_number": 2,
+                    "content": "Office visits are subject to cost sharing.",
+                    "document_type": "eoc",
+                    "official": False,
+                }
+            ],
+        }
+        with patch.object(LLMProvider, "invoke_json", side_effect=fake_response):
+            response = workflow.invoke({"case": case})["final_response"]
+
+        self.assertIsNone(response["clarification_question"])
+        self.assertEqual(response["results"][0]["agent"], "coverage")
 
 
 if __name__ == "__main__":

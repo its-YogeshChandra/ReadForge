@@ -3,6 +3,7 @@
 import asyncio
 from datetime import UTC, date, datetime
 from functools import partial
+import logging
 import re
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,6 +19,7 @@ from readforge.utils.db_utils import (
     ConversationNotFoundError,
     append_conversation_messages,
     load_conversation_messages,
+    remember_document_coverage_year,
 )
 from readforge.utils.embedding_utils import EmbeddingServiceError
 from readforge.utils.retrieval import (
@@ -28,8 +30,13 @@ from readforge.utils.retrieval import (
 from readforge.utils.tracing import trace
 
 _COVERAGE_YEAR = re.compile(r"\b(?:20\d{2}|2100)\b")
+_STATED_COVERAGE_YEAR = re.compile(
+    r"\b(?:coverage|plan)\s+year\s*(?::|is)?\s*(20\d{2}|2100)\b",
+    re.IGNORECASE,
+)
 # ponytail: process-local cap; use a Redis lease when the API runs multiple workers.
 _AGENT_REQUEST_CAP = asyncio.Semaphore(2)
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -72,6 +79,9 @@ def _case_from_request(
         "coverage_year": request.coverage_year,
         "service_date": request.service_date,
     }
+    stated_year = _STATED_COVERAGE_YEAR.search(request.message)
+    if case["coverage_year"] is None and stated_year:
+        case["coverage_year"] = int(stated_year.group(1))
     if not messages:
         return case
 
@@ -135,6 +145,20 @@ async def chat(
             case["coverage_year"] = (
                 case["coverage_year"] or evidence[0].coverage_year
             )
+            if case["coverage_year"] is not None and all(
+                item.coverage_year is None for item in evidence
+            ):
+                saved = await remember_document_coverage_year(
+                    request.document_id,
+                    case["coverage_year"],
+                )
+                if saved:
+                    evidence = [
+                        item.model_copy(
+                            update={"coverage_year": case["coverage_year"]}
+                        )
+                        for item in evidence
+                    ]
         case["evidence"] = [item.model_dump(mode="json") for item in evidence]
         trace(request_id, "chat.agents_started")
         async with _AGENT_REQUEST_CAP:
@@ -191,9 +215,20 @@ async def chat(
     except ConversationDocumentMismatchError as error:
         trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except (EmbeddingServiceError, LLMProviderError) as error:
+    except EmbeddingServiceError as error:
         trace(request_id, "chat.failed", error_type=type(error).__name__)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+        logger.exception("Chat evidence retrieval failed")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Document search is temporarily unavailable",
+        ) from error
+    except LLMProviderError as error:
+        trace(request_id, "chat.failed", error_type=type(error).__name__)
+        logger.exception("Chat model request failed")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Document assistant could not generate a response",
+        ) from error
     except TimeoutError as error:
         trace(request_id, "chat.failed", error_type=type(error).__name__)
         raise HTTPException(
