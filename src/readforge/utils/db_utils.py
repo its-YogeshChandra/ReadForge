@@ -198,7 +198,7 @@ async def save_ocr(
 async def save_embeddings(
     job_id: UUID,
     document_id: UUID,
-    chunks: list[tuple[int, str, str, list[float]]],
+    chunks: list[tuple[int, int, str, str, list[float]]],
 ) -> None:
     """Replace a document's chunks and mark its job completed."""
     async with SessionLocal() as session:
@@ -209,12 +209,12 @@ async def save_embeddings(
             DocumentChunk(
                 document_id=document_id,
                 page_number=page_number,
-                chunk_index=0,
+                chunk_index=chunk_index,
                 content=content,
                 embedding_model=model,
                 embedding=embedding,
             )
-            for page_number, content, model, embedding in chunks
+            for page_number, chunk_index, content, model, embedding in chunks
         )
         database_job = await session.get(Job, job_id)
         if database_job is None:

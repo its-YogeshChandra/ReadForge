@@ -82,7 +82,7 @@ async def retrieve_evidence(
                             ),
                         )
                         .order_by(DocumentChunk.page_number, DocumentChunk.chunk_index)
-                        .limit(limit)
+                        .limit(limit * 2)
                     )
                 ).all()
             )
@@ -96,21 +96,27 @@ async def retrieve_evidence(
                         DocumentChunk.embedding_model == model,
                     )
                     .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
-                    .limit(limit)
+                    .limit(limit * 2)
                 )
             ).all()
         )
 
-    chunks = list({chunk.id: chunk for chunk in [*exact, *semantic]}.values())[:limit]
+    pages: dict[int, list[DocumentChunk]] = {}
+    for chunk in [*exact, *semantic]:
+        if chunk.page_number not in pages and len(pages) >= limit:
+            continue
+        page_chunks = pages.setdefault(chunk.page_number, [])
+        if all(existing.content != chunk.content for existing in page_chunks):
+            page_chunks.append(chunk)
     return [
         Evidence(
-            evidence_id=f"chunk-{chunk.id}",
-            page_number=chunk.page_number,
-            content=chunk.content,
+            evidence_id=f"chunk-{page_chunks[0].id}",
+            page_number=page_number,
+            content="\n\n".join(chunk.content for chunk in page_chunks),
             document_type=document.document_type,
             plan_name=document.plan_name,
             coverage_year=document.coverage_year,
             official=document.source_verified,
         )
-        for chunk in chunks
+        for page_number, page_chunks in pages.items()
     ]

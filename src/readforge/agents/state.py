@@ -64,7 +64,18 @@ class AgentFinding(BaseModel):
 
     conclusion: str = Field(min_length=1)
     evidence_ids: list[str]
-    missing_information: list[str]
+    missing_information: list[str] = Field(
+        description=(
+            "Document facts required to answer the question that the supplied "
+            "evidence does not establish."
+        )
+    )
+    user_context: list[str] = Field(
+        description=(
+            "Optional insured-specific details needed only to personalize or "
+            "apply the document answer."
+        )
+    )
     conflicts: list[str]
 
 

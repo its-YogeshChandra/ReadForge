@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ChatMessage } from '@/utils/types/chat';
+import type { AgentCitation, ChatMessage } from '@/utils/types/chat';
 import { sendChatMessage } from '@/utils/api/chatApi';
 
 /* ─────────────────────── Icons ─────────────────────── */
@@ -101,6 +101,28 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       ) ?? [],
     ),
   ];
+  const userContext = [
+    ...new Set(
+      message.result?.results.flatMap((result) =>
+        result.findings.flatMap((finding) => finding.user_context ?? []),
+      ) ?? [],
+    ),
+  ];
+  const citations = [
+    ...new Map(
+      message.result?.results
+        .flatMap((result) =>
+          result.findings.flatMap((finding) => finding.citations),
+        )
+        .map((citation): [string, AgentCitation] => [
+          `${citation.document_type}-${citation.page_number}`,
+          citation,
+        ]) ?? [],
+    ).values(),
+  ];
+  const hasUnverifiedSource = message.result?.results.some((result) =>
+    result.findings.some((finding) => !finding.source_verified),
+  );
 
   if (isSystem) {
     return (
@@ -146,23 +168,19 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <div className="mt-3 border-t border-[--color-muted-light]/60 pt-2 text-xs">
             {message.result.overall_evidence_score !== null && (
               <p className="font-medium">
-                Evidence score: {message.result.overall_evidence_score}/100 ·{' '}
+                Evidence support: {message.result.overall_evidence_score}/100 ·{' '}
                 {message.result.overall_confidence_level} confidence
               </p>
             )}
-            {message.result.results.flatMap((result) =>
-              result.findings.flatMap((finding) =>
-                finding.citations.map((citation) => (
-                  <p
-                    key={`${result.agent}-${citation.evidence_id}`}
-                    className="mt-1 text-[--color-muted-grey]"
-                  >
-                    {result.agent.replaceAll('_', ' ')} · page{' '}
-                    {citation.page_number}
-                  </p>
-                )),
-              ),
-            )}
+            {citations.map((citation) => (
+              <p
+                key={`${citation.document_type}-${citation.page_number}`}
+                className="mt-1 text-[--color-muted-grey]"
+              >
+                {citation.document_type.replaceAll('_', ' ')} · page{' '}
+                {citation.page_number}
+              </p>
+            ))}
             {message.result.requires_human_review && (
               <p className="mt-2 font-medium text-amber-700">
                 Human review recommended
@@ -170,7 +188,17 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             )}
             {missingInformation.length > 0 && (
               <p className="mt-2 text-amber-700">
-                Missing context: {missingInformation.join(', ')}
+                Missing document evidence: {missingInformation.join(', ')}
+              </p>
+            )}
+            {userContext.length > 0 && (
+              <p className="mt-2 text-[--color-muted-grey]">
+                To personalize this answer: {userContext.join(', ')}
+              </p>
+            )}
+            {hasUnverifiedSource && (
+              <p className="mt-2 text-[--color-muted-grey]">
+                Uploaded source authenticity has not been independently verified.
               </p>
             )}
             <p className="mt-2 text-[--color-muted-grey]">

@@ -2,7 +2,7 @@
 
 from readforge.utils.embedding_utils import EmbeddingsPayload, embed_text
 from readforge.utils.reading_util import OcrResponse
-from readforge.worker import _embed_pages
+from readforge.worker import _embed_pages, _text_chunks
 
 
 class _Response:
@@ -62,4 +62,15 @@ def test_worker_batches_page_embeddings(monkeypatch) -> None:
 
     assert batch_sizes == [32, 1]
     assert len(chunks) == 33
-    assert all(chunk[2] == "test/model" for chunk in chunks)
+    assert all(chunk[3] == "test/model" for chunk in chunks)
+
+
+def test_page_chunking_keeps_numbered_items_intact() -> None:
+    first_item = "1. " + "first benefit " * 110
+    second_item = "2. " + "family floater reset rule " * 70
+
+    chunks = _text_chunks(f"Overview\n\n{first_item}\n{second_item}")
+
+    assert len(chunks) == 2
+    assert first_item.strip() in chunks[0]
+    assert second_item.strip() in chunks[1]

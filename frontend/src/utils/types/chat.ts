@@ -10,10 +10,12 @@ export interface AgentFinding {
   conclusion: string;
   citations: AgentCitation[];
   missing_information: string[];
+  user_context: string[];
   conflicts: string[];
   evidence_score: number;
   confidence_level: 'low' | 'medium' | 'high';
   requires_human_review: boolean;
+  source_verified: boolean;
 }
 
 export interface SpecialistResult {

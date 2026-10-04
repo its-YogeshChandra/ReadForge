@@ -3,6 +3,7 @@
 import asyncio
 from datetime import UTC, datetime
 import logging
+import re
 from tempfile import TemporaryDirectory
 from time import monotonic
 
@@ -38,6 +39,10 @@ JOB_COUNT = 10
 PAGE_BATCH_SIZE = 10
 POLL_INTERVAL_SECONDS = 1
 EMBEDDING_BATCH_SIZE = 32
+TEXT_CHUNK_MAX_CHARS = 2400
+_LIST_ITEM_BREAK = re.compile(
+    r"\n(?=\s*(?:\d+|[A-Za-z]|[ivxlcdmIVXLCDM]+)[.)]\s+)"
+)
 
 logger = logging.getLogger(__name__)
 tracer = otel_trace.get_tracer("readforge.worker")
@@ -86,16 +91,49 @@ def _read_and_ocr(job: RedisJob, size_bytes: int) -> list[OcrResponse]:
         return _ocr_pages(pages)
 
 
+def _text_chunks(text: str) -> list[str]:
+    """Pack paragraphs/list items without embedding an entire dense page."""
+    blocks = [
+        block.strip()
+        for block in _LIST_ITEM_BREAK.split(text.replace("\r\n", "\n"))
+        for block in re.split(r"\n\s*\n", block)
+        if block.strip()
+    ]
+    chunks: list[str] = []
+    current = ""
+    for block in blocks:
+        while len(block) > TEXT_CHUNK_MAX_CHARS:
+            if current:
+                chunks.append(current)
+                current = ""
+            split_at = block.rfind(" ", 0, TEXT_CHUNK_MAX_CHARS + 1)
+            split_at = split_at if split_at > 0 else TEXT_CHUNK_MAX_CHARS
+            chunks.append(block[:split_at].strip())
+            block = block[split_at:].strip()
+        candidate = f"{current}\n\n{block}".strip() if current else block
+        if len(candidate) <= TEXT_CHUNK_MAX_CHARS:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = block
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _embed_pages(
     results: list[OcrResponse],
-) -> list[tuple[int, str, str, list[float]]]:
-    chunks: list[tuple[int, str, str, list[float]]] = []
-    pages: list[tuple[int, str]] = []
+) -> list[tuple[int, int, str, str, list[float]]]:
+    chunks: list[tuple[int, int, str, str, list[float]]] = []
+    pages: list[tuple[int, int, str]] = []
     for result in results:
         page_text = result.file_data.get("text", "")
         text = page_text.strip() if isinstance(page_text, str) else ""
         if text:
-            pages.append((result.page_number, text))
+            pages.extend(
+                (result.page_number, chunk_index, chunk)
+                for chunk_index, chunk in enumerate(_text_chunks(text))
+            )
 
     if not pages:
         return []
@@ -103,10 +141,12 @@ def _embed_pages(
     model = embedding_model()
     for start in range(0, len(pages), EMBEDDING_BATCH_SIZE):
         batch = pages[start : start + EMBEDDING_BATCH_SIZE]
-        vectors = embed_texts([text for _, text in batch])
+        vectors = embed_texts([text for _, _, text in batch])
         chunks.extend(
-            (page_number, text, model, vector)
-            for (page_number, text), vector in zip(batch, vectors, strict=True)
+            (page_number, chunk_index, text, model, vector)
+            for (page_number, chunk_index, text), vector in zip(
+                batch, vectors, strict=True
+            )
         )
     return chunks
 

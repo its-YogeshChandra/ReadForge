@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from readforge.agents.provider import LLMProvider
-from readforge.agents.workflow import workflow
+from readforge.agents.state import CaseInput
+from readforge.agents.workflow import _score_finding, workflow
 
 
 class MultiAgentWorkflowTest(unittest.TestCase):
@@ -26,12 +27,14 @@ class MultiAgentWorkflowTest(unittest.TestCase):
                             "conclusion": "The service is conditionally covered.",
                             "evidence_ids": ["E1"],
                             "missing_information": [],
+                            "user_context": [],
                             "conflicts": [],
                         },
                         {
                             "conclusion": "Payment is guaranteed.",
                             "evidence_ids": ["UNKNOWN"],
-                            "missing_information": ["Current member eligibility"],
+                            "missing_information": [],
+                            "user_context": ["Current member eligibility"],
                             "conflicts": [],
                         },
                     ]
@@ -42,6 +45,7 @@ class MultiAgentWorkflowTest(unittest.TestCase):
                         "conclusion": "A PCP referral is required.",
                         "evidence_ids": ["E1"],
                         "missing_information": [],
+                        "user_context": [],
                         "conflicts": [],
                     }
                 ]
@@ -74,8 +78,8 @@ class MultiAgentWorkflowTest(unittest.TestCase):
             ["coverage", "referral"],
         )
         self.assertEqual(response["results"][0]["findings"][0]["evidence_score"], 100)
-        self.assertEqual(response["results"][0]["findings"][1]["evidence_score"], 0)
-        self.assertEqual(response["overall_evidence_score"], 0)
+        self.assertEqual(response["results"][0]["findings"][1]["evidence_score"], 30)
+        self.assertEqual(response["overall_evidence_score"], 30)
         self.assertTrue(response["requires_human_review"])
 
     def test_missing_context_returns_a_clarification_without_calling_llm(self) -> None:
@@ -97,7 +101,8 @@ class MultiAgentWorkflowTest(unittest.TestCase):
                     {
                         "conclusion": "The document describes office visits.",
                         "evidence_ids": ["E1"],
-                        "missing_information": ["Plan year"],
+                        "missing_information": [],
+                        "user_context": ["Plan year"],
                         "conflicts": [],
                     }
                 ]
@@ -120,6 +125,44 @@ class MultiAgentWorkflowTest(unittest.TestCase):
 
         self.assertIsNone(response["clarification_question"])
         self.assertEqual(response["results"][0]["agent"], "coverage")
+        self.assertEqual(response["overall_evidence_score"], 100)
+        self.assertFalse(response["requires_human_review"])
+
+    def test_explicit_plan_metadata_conflict_reduces_confidence(self) -> None:
+        case = CaseInput.model_validate(
+            {
+                "question": "Is this covered?",
+                "plan_name": "Requested Plan",
+                "coverage_year": 2026,
+                "evidence": [
+                    {
+                        "evidence_id": "E1",
+                        "page_number": 2,
+                        "content": "The service is covered.",
+                        "document_type": "eoc",
+                        "plan_name": "Different Plan",
+                        "coverage_year": 2025,
+                        "official": False,
+                    }
+                ],
+            }
+        )
+
+        finding = _score_finding(
+            case,
+            "coverage",
+            {
+                "conclusion": "The service is covered.",
+                "evidence_ids": ["E1"],
+                "missing_information": [],
+                "user_context": [],
+                "conflicts": [],
+            },
+        )
+
+        self.assertEqual(finding["evidence_score"], 60)
+        self.assertEqual(finding["score_breakdown"]["metadata_consistent"], 0)
+        self.assertEqual(len(finding["conflicts"]), 2)
 
 
 if __name__ == "__main__":

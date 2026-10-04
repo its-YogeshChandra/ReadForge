@@ -54,9 +54,23 @@ supplied evidence explicitly confirms it.
 OUTPUT_INSTRUCTIONS = """
 Use only the supplied evidence. Return JSON only:
 {"findings": [{"conclusion": "...", "evidence_ids": ["E1"],
-"missing_information": [], "conflicts": []}]}
-Create at most five findings. Cite only supplied evidence IDs. Put every fact
-needed to verify the conclusion into missing_information when it is absent.
+"missing_information": [], "user_context": [], "conflicts": []}]}
+Create at most three concise findings and cite only supplied evidence IDs.
+
+Missing-information policy:
+- missing_information is only for document-level facts required to answer the
+  question that the supplied evidence does not establish.
+- Put insured-specific schedule details needed only to personalize the answer
+  in user_context instead. Examples include the member's sum insured, policy
+  commencement date, deductible, cost sharing, renewal status, or billing code.
+- Do not add irrelevant user context. If the retrieved evidence answers the
+  factual question, leave missing_information empty.
+
+Citation and answer discipline:
+- Use each evidence ID at most once per finding and merge overlapping findings.
+- Answer only what was asked. Do not add adjacent clauses, definitions, or
+  renewal rules unless they directly change the answer.
+- For a number, threshold, or time period, lead with that value.
 """
 
 AGENT_NODES: dict[AgentIntent, str] = {
@@ -157,22 +171,33 @@ def _score_finding(
     if not cited_evidence:
         conflicts.append("No valid supporting evidence was cited.")
 
-    plan_date_match = any(
-        evidence.plan_name
-        and case.plan_name
-        and evidence.plan_name.casefold() == case.plan_name.casefold()
-        and evidence.coverage_year == case.coverage_year
-        for evidence in cited_evidence
-    )
+    metadata_conflicts = []
+    for evidence in cited_evidence:
+        if (
+            evidence.plan_name
+            and case.plan_name
+            and evidence.plan_name.casefold() != case.plan_name.casefold()
+        ):
+            metadata_conflicts.append("Cited evidence belongs to a different plan.")
+        if (
+            evidence.coverage_year is not None
+            and case.coverage_year is not None
+            and evidence.coverage_year != case.coverage_year
+        ):
+            metadata_conflicts.append(
+                "Cited evidence belongs to a different coverage year."
+            )
+    conflicts.extend(metadata_conflicts)
+    conflicts = list(dict.fromkeys(conflicts))
     breakdown = {
-        "plan_and_year_match": 25 if plan_date_match else 0,
-        "official_source_cited": 25
-        if any(evidence.official for evidence in cited_evidence)
-        else 0,
-        "required_information_present": 25
+        "valid_evidence_cited": 30 if cited_evidence else 0,
+        "document_information_complete": 30
         if not finding["missing_information"]
         else 0,
         "no_conflicting_evidence": 25 if not conflicts else 0,
+        "metadata_consistent": 15
+        if cited_evidence and not metadata_conflicts
+        else 0,
     }
     score = sum(breakdown.values())
     return {
@@ -186,10 +211,12 @@ def _score_finding(
             for evidence in cited_evidence
         ],
         "missing_information": finding["missing_information"],
+        "user_context": finding["user_context"],
         "conflicts": conflicts,
         "evidence_score": score,
         "confidence_level": _confidence_level(score),
         "score_breakdown": breakdown,
+        "source_verified": any(evidence.official for evidence in cited_evidence),
         "requires_human_review": score < 80 or intent == "medical_necessity",
     }
 

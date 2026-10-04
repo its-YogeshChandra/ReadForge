@@ -295,8 +295,9 @@ class TestEmbedding:
         chunks = _embed_pages(ocr_results)
 
         assert len(chunks) == 1
-        page_number, text, model, vector = chunks[0]
+        page_number, chunk_index, text, model, vector = chunks[0]
         assert page_number == 1
+        assert chunk_index == 0
         assert isinstance(text, str) and len(text) > 0
         assert isinstance(model, str) and len(model) > 0
         assert isinstance(vector, list) and len(vector) > 0
@@ -378,7 +379,7 @@ class TestDatabaseOperations:
             await start_job(job_id, EXISTING_MEDIA_FILE, idem_key, datetime.now(UTC))
 
             chunks = [
-                (1, "Sample text", "clip", [0.1, 0.2, 0.3]),
+                (1, 0, "Sample text", "clip", [0.1, 0.2, 0.3]),
             ]
             await save_embeddings(UUID(job_id), document_id, chunks)
 
@@ -730,7 +731,7 @@ class TestSaveNegative:
                 await save_embeddings(
                     fake_job_id,
                     document_id,
-                    [(1, "text", "clip", [0.1, 0.2])],
+                    [(1, 0, "text", "clip", [0.1, 0.2])],
                 )
 
         _run(_test())

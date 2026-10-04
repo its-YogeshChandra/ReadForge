@@ -44,11 +44,13 @@ def _workflow_response() -> dict:
                             }
                         ],
                         "missing_information": [],
+                        "user_context": [],
                         "conflicts": [],
                         "evidence_score": 75,
                         "confidence_level": "medium",
                         "score_breakdown": {},
                         "requires_human_review": True,
+                        "source_verified": False,
                     }
                 ],
             }
